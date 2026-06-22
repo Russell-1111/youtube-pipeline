@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+input/*.mp3
+input/*.srt
+
+data/
+assets/images/
+assets/contact_sheets/
+output/

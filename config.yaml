@@ -1,0 +1,25 @@
+inputs:
+  voiceover: input/voiceover.mp3
+  transcript: input/transcript.srt
+
+outputs:
+  data_dir: data
+  images_dir: assets/images
+  contact_sheet: assets/contact_sheets/contact_sheet.png
+  final_video: output/final_video.mp4
+
+video:
+  width: 1920
+  height: 1080
+  fps: 30
+
+beats:
+  min_duration: 6
+  target_duration: 9
+  max_duration: 12
+  min_gap_beat_duration: 1.5
+  min_intro_beat_duration: 1.0
+  max_preview_chars: 80
+
+timing:
+  duration_mismatch_tolerance: 1.0
