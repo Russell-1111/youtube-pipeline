@@ -10,5 +10,6 @@ input/*.srt
 
 data/
 assets/images/
+assets/generated_images/
 assets/contact_sheets/
 output/
