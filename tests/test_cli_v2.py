@@ -96,6 +96,54 @@ def test_cli_use_generated_images_selects_generated_paths_and_output(tmp_path, m
     assert fps == 30
 
 
+def test_cli_use_generated_images_kinetic_selects_generated_paths_and_output(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    write_config(config_path)
+    write_beats(tmp_path / "data" / "beats.json", [beat(tmp_path)])
+    voiceover = tmp_path / "input" / "voiceover.mp3"
+    voiceover.parent.mkdir(parents=True)
+    voiceover.write_bytes(b"placeholder")
+    image_path = tmp_path / "assets" / "generated_images" / "beat_001.png"
+    image_path.parent.mkdir(parents=True)
+    Image.new("RGB", (1920, 1080), "white").save(image_path)
+
+    calls = []
+
+    def fake_render_video_kinetic(beats, audio_path, output_path, fps, width, height):
+        calls.append((beats, audio_path, output_path, fps, width, height))
+
+    monkeypatch.setattr("youtube_pipeline.__main__.render_video_kinetic", fake_render_video_kinetic)
+
+    result = main(["--config", str(config_path), "--use-generated-images-kinetic"])
+
+    assert result == 0
+    assert len(calls) == 1
+    beats, audio_path, output_path, fps, width, height = calls[0]
+    assert beats[0].image_path == image_path.as_posix()
+    assert audio_path == voiceover
+    assert output_path == tmp_path / "output" / "final_video_generated_kinetic.mp4"
+    assert fps == 30
+    assert width == 1920
+    assert height == 1080
+
+
+def test_cli_use_generated_images_kinetic_fails_validation_before_render(tmp_path, monkeypatch, capsys):
+    config_path = tmp_path / "config.yaml"
+    write_config(config_path)
+    write_beats(tmp_path / "data" / "beats.json", [beat(tmp_path)])
+
+    def fake_render_video_kinetic(*args):
+        raise AssertionError("kinetic render should not run when validation fails")
+
+    monkeypatch.setattr("youtube_pipeline.__main__.render_video_kinetic", fake_render_video_kinetic)
+
+    result = main(["--config", str(config_path), "--use-generated-images-kinetic"])
+
+    captured = capsys.readouterr()
+    assert result == 1
+    assert "Missing generated image for beat 001" in captured.err
+
+
 def test_cli_explicit_modes_are_mutually_exclusive(tmp_path):
     config_path = tmp_path / "config.yaml"
     write_config(config_path)
@@ -106,3 +154,15 @@ def test_cli_explicit_modes_are_mutually_exclusive(tmp_path):
         assert exc.code == 2
     else:
         raise AssertionError("Expected argparse to reject mutually exclusive modes")
+
+
+def test_cli_generated_image_modes_are_mutually_exclusive(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    write_config(config_path)
+
+    try:
+        main(["--config", str(config_path), "--use-generated-images", "--use-generated-images-kinetic"])
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected argparse to reject mutually exclusive generated image modes")

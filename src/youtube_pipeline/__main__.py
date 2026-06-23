@@ -12,7 +12,7 @@ from .generated_images import beats_with_generated_image_paths, load_and_validat
 from .images import generate_placeholder_images
 from .manifest import write_beats, write_manifest, write_transcript_segments
 from .prompts import write_image_prompts
-from .render import get_audio_duration, render_video
+from .render import get_audio_duration, render_video, render_video_kinetic
 from .srt_parser import parse_srt_file
 
 
@@ -31,6 +31,11 @@ def main(argv: list[str] | None = None) -> int:
         "--use-generated-images",
         action="store_true",
         help="Render video using validated assets/generated_images/beat_NNN.png files.",
+    )
+    mode_group.add_argument(
+        "--use-generated-images-kinetic",
+        action="store_true",
+        help="Render video using validated generated images with subtle deterministic motion.",
     )
     args = parser.parse_args(argv)
 
@@ -73,6 +78,26 @@ def main(argv: list[str] | None = None) -> int:
             generated_beats = beats_with_generated_image_paths(beats, generated_image_dir)
             output_path = config.outputs.final_video.parent / "final_video_generated.mp4"
             render_video(generated_beats, config.inputs.voiceover, output_path, config.video.fps)
+            print(f"Generated image validation passed: {len(beats)} images")
+            print(f"Final video: {output_path}")
+            return 0
+
+        if args.use_generated_images_kinetic:
+            beats, report = load_and_validate_generated_images(beats_path, generated_image_dir)
+            _print_validation_report(report)
+            if not report.ok:
+                return 1
+            _validate_voiceover(config.inputs.voiceover)
+            generated_beats = beats_with_generated_image_paths(beats, generated_image_dir)
+            output_path = config.outputs.final_video.parent / "final_video_generated_kinetic.mp4"
+            render_video_kinetic(
+                generated_beats,
+                config.inputs.voiceover,
+                output_path,
+                config.video.fps,
+                config.video.width,
+                config.video.height,
+            )
             print(f"Generated image validation passed: {len(beats)} images")
             print(f"Final video: {output_path}")
             return 0

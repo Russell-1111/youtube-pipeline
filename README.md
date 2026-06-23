@@ -76,3 +76,11 @@ python -m youtube_pipeline --use-generated-images
 ```
 
 This validates first, then renders `output/final_video_generated.mp4`. It never falls back to V1 placeholder frames.
+
+Render with generated images and subtle deterministic motion:
+
+```powershell
+python -m youtube_pipeline --use-generated-images-kinetic
+```
+
+This validates the same generated images first, then renders `output/final_video_generated_kinetic.mp4`. The existing static generated-image render output is not changed.
