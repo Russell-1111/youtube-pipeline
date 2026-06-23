@@ -88,14 +88,21 @@ def _sanitize_source_text(text: str) -> str:
 
 def _build_prompt(beat: Beat, source_text: str) -> str:
     return (
-        "Create one clear visual concept for this narration beat, not a subtitle card. "
+        "Create one clear central visual metaphor for this narration beat, not a busy multi-panel storyboard or subtitle card. "
         "Style: Minimalist 2D Explainer / Clean Line Art Animation, clean medium-weight black outlines, "
-        "rudimentary stick figures, flat solid colors, sparse backgrounds, infographic layout. "
-        "Use simple charts, timelines, arrows, boxes, UI mockups, labels, or diagrams when useful. "
-        "Allow only short on-image text labels, ideally 1-5 words. "
-        "Avoid long sentences inside the image. "
+        "simple stick figures, symbolic diagrams, flat solid colors, clear negative space, and a light neutral or white background by default. "
+        "Use the same visual language as a clean educational YouTube explainer: simple figures, symbolic diagrams, "
+        "flat colors, clear negative space, and minimal text. "
+        "Keep the composition sparse and readable. "
+        "Use clean 2D line-art diagrams, symbolic scenes, simple arrows, timelines, and minimal stick figures when useful. "
+        "Avoid dark cinematic scenes unless the narration absolutely requires darkness. "
+        "Avoid text-heavy UI panels, warning boxes, dashboards, cards, repeated status labels, slide-deck layouts, "
+        "quote-card layouts, long phrases, captions, subtitles, narration text, embedded narration text, "
+        "or subtitle-like sentence fragments copied from the narration. "
+        "Use at most 0-3 short on-image labels; each label should be 1-3 words when possible. "
         "Frame: 16:9 YouTube frame, 1920x1080. "
-        "Do not use gradients, realistic textures, photorealism, cinematic realism, watermark, logo, or subtitles. "
+        "Do not use gradients, realistic textures, photorealism, cinematic realism, watermark, logo, subtitles, "
+        "or embedded narration text. "
         f"Beat type: {beat.beat_type}. Narration beat: {source_text}"
     )
 

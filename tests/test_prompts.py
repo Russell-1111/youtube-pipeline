@@ -87,6 +87,21 @@ def test_prompt_json_schema_and_record_shape(tmp_path):
     assert "Do not use gradients" in record["prompt"]
     assert "photorealism" in record["prompt"]
     assert "watermark" in record["prompt"]
+    assert "one clear central visual metaphor" in record["prompt"]
+    assert "light neutral or white background" in record["prompt"]
+    assert "sparse and readable" in record["prompt"]
+    assert "Avoid text-heavy UI panels" in record["prompt"]
+    assert "warning boxes" in record["prompt"]
+    assert "dashboards" in record["prompt"]
+    assert "cards" in record["prompt"]
+    assert "repeated status labels" in record["prompt"]
+    assert "Use at most 0-3 short on-image labels" in record["prompt"]
+    assert "1-3 words" in record["prompt"]
+    assert "captions" in record["prompt"]
+    assert "subtitles" in record["prompt"]
+    assert "narration text" in record["prompt"]
+    assert "embedded narration text" in record["prompt"]
+    assert "Avoid dark cinematic scenes unless the narration absolutely requires darkness" in record["prompt"]
 
 
 def test_prompt_source_text_falls_back_to_text_preview_when_segments_missing(tmp_path):
