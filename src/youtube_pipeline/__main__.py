@@ -11,6 +11,7 @@ from .errors import InputFileError, PipelineError
 from .generated_images import beats_with_generated_image_paths, load_and_validate_generated_images
 from .images import generate_placeholder_images
 from .manifest import write_beats, write_manifest, write_transcript_segments
+from .production_audit import print_audit_summary, run_production_audit
 from .prompts import write_image_prompts
 from .render import get_audio_duration, render_video, render_video_kinetic
 from .srt_parser import parse_srt_file
@@ -37,6 +38,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Render video using validated generated images with subtle deterministic motion.",
     )
+    mode_group.add_argument(
+        "--production-audit",
+        action="store_true",
+        help="Write advisory production-readiness JSON and Markdown reports without rendering.",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -47,6 +53,11 @@ def main(argv: list[str] | None = None) -> int:
         beats_path = config.outputs.data_dir / "beats.json"
         transcript_segments_path = config.outputs.data_dir / "transcript_segments.json"
         generated_image_dir = config.outputs.images_dir.parent / "generated_images"
+
+        if args.production_audit:
+            result = run_production_audit(config, config_path.resolve().parent)
+            print_audit_summary(result, config_path.resolve().parent)
+            return 1 if result.has_core_errors else 0
 
         if args.generate_prompts:
             payload = write_image_prompts(

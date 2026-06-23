@@ -26,6 +26,14 @@ Use a custom config:
 python -m youtube_pipeline --config path/to/config.yaml
 ```
 
+Run an advisory production-readiness audit:
+
+```powershell
+python -m youtube_pipeline --production-audit
+```
+
+This writes `data/production_audit_report.json` and `data/production_audit_report.md`. It does not render video, generate prompts, generate images, or change existing files except those two audit reports.
+
 ## Outputs
 
 - `data/transcript_segments.json`
