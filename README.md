@@ -34,6 +34,22 @@ python -m youtube_pipeline --production-audit
 
 This writes `data/production_audit_report.json` and `data/production_audit_report.md`. It does not render video, generate prompts, generate images, or change existing files except those two audit reports.
 
+Run a pre-voiceover script runtime audit:
+
+```powershell
+python -m youtube_pipeline --script-audit
+```
+
+This reads `input/script.md` by default and writes `data/script_audit_report.json` and `data/script_audit_report.md`. You can pass a script path explicitly:
+
+```powershell
+python -m youtube_pipeline --script-audit input/script.md
+```
+
+Before generating voiceover, run `python -m youtube_pipeline --script-audit`. Do not paste the script into ElevenLabs/Minimax unless the audit status is `pass`. If the status is `needs_cut`, revise first. If the status is `blocked_too_long`, do not generate voiceover.
+
+The script is not complete until it passes the runtime budget.
+
 ## Outputs
 
 - `data/transcript_segments.json`

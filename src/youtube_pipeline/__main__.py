@@ -14,6 +14,7 @@ from .manifest import write_beats, write_manifest, write_transcript_segments
 from .production_audit import print_audit_summary, run_production_audit
 from .prompts import write_image_prompts
 from .render import get_audio_duration, render_video, render_video_kinetic
+from .script_audit import print_script_audit_summary, run_script_audit
 from .srt_parser import parse_srt_file
 
 
@@ -43,6 +44,13 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Write advisory production-readiness JSON and Markdown reports without rendering.",
     )
+    mode_group.add_argument(
+        "--script-audit",
+        nargs="?",
+        const="input/script.md",
+        default=None,
+        help="Write pre-voiceover script runtime JSON and Markdown reports without rendering.",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -53,10 +61,23 @@ def main(argv: list[str] | None = None) -> int:
         beats_path = config.outputs.data_dir / "beats.json"
         transcript_segments_path = config.outputs.data_dir / "transcript_segments.json"
         generated_image_dir = config.outputs.images_dir.parent / "generated_images"
+        base_dir = config_path.resolve().parent
+
+        if args.script_audit is not None:
+            script_path = Path(args.script_audit)
+            if not script_path.is_absolute():
+                script_path = base_dir / script_path
+            result = run_script_audit(script_path, config.outputs.data_dir, base_dir)
+            print_script_audit_summary(result, base_dir)
+            if result.report["status"] == "error":
+                for finding in result.report["findings"]:
+                    if finding["severity"] == "error":
+                        print(f"Script audit error: {finding['message']}", file=sys.stderr)
+            return 1 if result.should_fail else 0
 
         if args.production_audit:
-            result = run_production_audit(config, config_path.resolve().parent)
-            print_audit_summary(result, config_path.resolve().parent)
+            result = run_production_audit(config, base_dir)
+            print_audit_summary(result, base_dir)
             return 1 if result.has_core_errors else 0
 
         if args.generate_prompts:
