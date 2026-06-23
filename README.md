@@ -50,6 +50,40 @@ Before generating voiceover, run `python -m youtube_pipeline --script-audit`. Do
 
 The script is not complete until it passes the runtime budget.
 
+Run a pre-voiceover script quality heuristic audit:
+
+```powershell
+python -m youtube_pipeline --script-quality-audit
+```
+
+This reads `input/script.md` by default and writes `data/script_quality_report.json` and `data/script_quality_report.md`. You can pass a script path explicitly:
+
+```powershell
+python -m youtube_pipeline --script-quality-audit input/script.md
+```
+
+The quality report uses local structural heuristics to produce a retention-risk score. It is a review gate before voiceover, not a forecast of audience performance, and it does not promise retention or success.
+
+Before voiceover, run both gates in this order:
+
+```powershell
+python -m youtube_pipeline --script-audit input/script.md
+python -m youtube_pipeline --script-quality-audit input/script.md
+```
+
+Only after both gates pass:
+
+1. Generate voiceover.
+2. Create transcript/SRT.
+3. Run `python -m youtube_pipeline --dry-run`.
+4. Run `python -m youtube_pipeline --generate-prompts`.
+5. Generate images manually from the prompt records.
+6. Run `python -m youtube_pipeline --validate-generated-images`.
+7. Run `python -m youtube_pipeline --use-generated-images-kinetic`.
+8. Run `python -m youtube_pipeline --production-audit`.
+
+Local templates are available at `templates/script_brief_template.md` and `templates/script_writer_prompt.md`. They are copy-paste aids only; the pipeline does not write scripts, rewrite scripts, call LLMs, browse, inspect audio, or render video during script quality audit.
+
 ## Outputs
 
 - `data/transcript_segments.json`
