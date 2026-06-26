@@ -8,6 +8,8 @@ The generated-image stage is external and slow when every visual beat needs a se
 
 The current render optimization goal is not to reduce image density. Future Late Human videos should support roughly 70-90 high-quality generated images across 9-11 minutes while keeping render time practical.
 
+Dense beat planning should stay preview-only until the plan is reviewed. The planning command may write dense preview reports under `data/`, but it should not overwrite production beats, regenerate prompts, generate images, or render videos.
+
 ## Kinetic Render Time
 
 The kinetic MoviePy render is reliable but slow. A previous 9:53 video took about 57 minutes to render. The MoviePy renderer should remain the trusted fallback while an experimental FFmpeg renderer is tested as a separate command.

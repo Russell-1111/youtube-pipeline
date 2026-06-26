@@ -7,6 +7,7 @@ from pathlib import Path
 from .beats import build_beats
 from .config import ensure_output_dirs, load_config, validate_config
 from .contact_sheet import generate_contact_sheet
+from .dense_beats import print_dense_plan_summary, run_dense_beat_plan
 from .errors import InputFileError, PipelineError
 from .generated_images import beats_with_generated_image_paths, load_and_validate_generated_images
 from .images import generate_placeholder_images
@@ -56,6 +57,11 @@ def main(argv: list[str] | None = None) -> int:
         "--production-audit",
         action="store_true",
         help="Write advisory production-readiness JSON and Markdown reports without rendering.",
+    )
+    mode_group.add_argument(
+        "--plan-dense-beats",
+        action="store_true",
+        help="Preview optional dense beat planning reports without overwriting data/beats.json.",
     )
     mode_group.add_argument(
         "--script-audit",
@@ -140,6 +146,11 @@ def main(argv: list[str] | None = None) -> int:
             result = run_production_audit(config, base_dir)
             print_audit_summary(result, base_dir)
             return 1 if result.has_core_errors else 0
+
+        if args.plan_dense_beats:
+            result = run_dense_beat_plan(config, base_dir)
+            print_dense_plan_summary(result, base_dir)
+            return 0
 
         if args.generate_prompts:
             payload = write_image_prompts(

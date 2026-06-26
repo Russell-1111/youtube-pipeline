@@ -38,6 +38,14 @@ class BeatConfig:
     min_gap_beat_duration: float
     min_intro_beat_duration: float
     max_preview_chars: int
+    density_mode: str = "standard"
+    dense_min_target: int = 70
+    dense_max_target: int = 90
+    dense_min_duration: float = 6.0
+    dense_preferred_duration: float = 7.5
+    dense_soft_max_duration: float = 9.0
+    dense_hard_max_duration: float = 12.0
+    allow_dense_split: bool = True
 
 
 @dataclass(frozen=True)
@@ -94,6 +102,14 @@ def load_config(config_path: Path) -> PipelineConfig:
                 raw, "beats", "min_intro_beat_duration", default=1.0, allow_zero=True
             ),
             max_preview_chars=_positive_int(raw, "beats", "max_preview_chars", default=80),
+            density_mode=_string(raw, "beats", "density_mode", default="standard"),
+            dense_min_target=_positive_int(raw, "beats", "dense_min_target", default=70),
+            dense_max_target=_positive_int(raw, "beats", "dense_max_target", default=90),
+            dense_min_duration=_positive_number(raw, "beats", "dense_min_duration", default=6.0),
+            dense_preferred_duration=_positive_number(raw, "beats", "dense_preferred_duration", default=7.5),
+            dense_soft_max_duration=_positive_number(raw, "beats", "dense_soft_max_duration", default=9.0),
+            dense_hard_max_duration=_positive_number(raw, "beats", "dense_hard_max_duration", default=12.0),
+            allow_dense_split=_bool(raw, "beats", "allow_dense_split", default=True),
         ),
         timing=TimingConfig(
             duration_mismatch_tolerance=_positive_number(raw, "timing", "duration_mismatch_tolerance", allow_zero=True),
@@ -108,6 +124,21 @@ def validate_config(config: PipelineConfig) -> None:
         raise ConfigError("Beat durations must satisfy min_duration <= target_duration <= max_duration.")
     if config.beats.max_preview_chars < 10:
         raise ConfigError("beats.max_preview_chars must be at least 10.")
+    if config.beats.density_mode not in {"standard", "late_human_dense"}:
+        raise ConfigError("beats.density_mode must be 'standard' or 'late_human_dense'.")
+    if config.beats.dense_min_target > config.beats.dense_max_target:
+        raise ConfigError("Dense beat targets must satisfy dense_min_target <= dense_max_target.")
+    if not (
+        0
+        < config.beats.dense_min_duration
+        <= config.beats.dense_preferred_duration
+        <= config.beats.dense_soft_max_duration
+        <= config.beats.dense_hard_max_duration
+    ):
+        raise ConfigError(
+            "Dense beat durations must satisfy "
+            "dense_min_duration <= dense_preferred_duration <= dense_soft_max_duration <= dense_hard_max_duration."
+        )
 
 
 def ensure_output_dirs(config: PipelineConfig) -> None:
@@ -159,3 +190,17 @@ def _positive_int(raw: dict[str, Any], section: str, key: str, default: int | No
     if int(value) != value:
         raise ConfigError(f"Config value must be an integer: {section}.{key}")
     return int(value)
+
+
+def _string(raw: dict[str, Any], section: str, key: str, default: str | None = None) -> str:
+    value = _section(raw, section).get(key, default)
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigError(f"Missing or invalid string config: {section}.{key}")
+    return value.strip()
+
+
+def _bool(raw: dict[str, Any], section: str, key: str, default: bool | None = None) -> bool:
+    value = _section(raw, section).get(key, default)
+    if not isinstance(value, bool):
+        raise ConfigError(f"Missing or invalid boolean config: {section}.{key}")
+    return value

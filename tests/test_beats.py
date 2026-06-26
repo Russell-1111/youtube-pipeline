@@ -46,6 +46,45 @@ def test_beat_grouping_into_duration_windows(tmp_path):
     assert beats[1].segment_indexes == [3]
 
 
+def test_standard_beat_generation_shape_is_unchanged(tmp_path):
+    beats = build_beats(
+        [
+            segment(1, 0, 4, "Opening."),
+            segment(2, 4, 8, "Middle."),
+            segment(3, 8, 14, "Next idea."),
+        ],
+        BEAT_CONFIG,
+        tmp_path,
+    )
+
+    assert [beat.to_dict() for beat in beats] == [
+        {
+            "beat_number": 1,
+            "beat_type": "normal",
+            "start": "00:00:00,000",
+            "end": "00:00:08,000",
+            "start_seconds": 0.0,
+            "end_seconds": 8,
+            "duration_seconds": 8.0,
+            "text_preview": "Opening. Middle.",
+            "segment_indexes": [1, 2],
+            "image_path": (tmp_path / "beat_001.png").as_posix(),
+        },
+        {
+            "beat_number": 2,
+            "beat_type": "normal",
+            "start": "00:00:08,000",
+            "end": "00:00:14,000",
+            "start_seconds": 8,
+            "end_seconds": 14,
+            "duration_seconds": 6,
+            "text_preview": "Next idea.",
+            "segment_indexes": [3],
+            "image_path": (tmp_path / "beat_002.png").as_posix(),
+        },
+    ]
+
+
 def test_long_single_segment_becomes_one_beat(tmp_path):
     beats = build_beats([segment(1, 0, 14, "Long caption")], BEAT_CONFIG, tmp_path)
 

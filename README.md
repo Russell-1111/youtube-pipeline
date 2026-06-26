@@ -35,6 +35,7 @@ The script audits are local heuristic gates. They help catch runtime, structure,
 python -m youtube_pipeline --dry-run
 python -m youtube_pipeline --script-audit input/script.md
 python -m youtube_pipeline --script-quality-audit input/script.md
+python -m youtube_pipeline --plan-dense-beats
 python -m youtube_pipeline --generate-prompts
 python -m youtube_pipeline --validate-generated-images
 python -m youtube_pipeline --use-generated-images
@@ -46,6 +47,8 @@ python -m pytest
 ```
 
 `--dry-run` reads the local voiceover and transcript, builds transcript segments, visual beats, a manifest, placeholder beat images, and a contact sheet, but skips MP4 rendering.
+
+`--plan-dense-beats` reads existing `data/beats.json` and `data/transcript_segments.json`, then writes preview-only dense beat planning artifacts to `data/dense_beat_plan.json`, `data/dense_beat_plan.md`, and `data/beats_dense_preview.json`. It does not overwrite production beats, generate prompts, generate images, build contact sheets, or render video.
 
 `--generate-prompts` reads `data/beats.json` and writes structured prompt records to `data/image_prompts.json`. The pipeline does not call an image-generation API.
 

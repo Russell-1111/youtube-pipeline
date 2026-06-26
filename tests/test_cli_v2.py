@@ -1,11 +1,14 @@
+import hashlib
+import json
 from pathlib import Path
 
 from PIL import Image
 
 from youtube_pipeline.__main__ import main
-from youtube_pipeline.manifest import write_beats
-from youtube_pipeline.models import Beat
+from youtube_pipeline.manifest import write_beats, write_transcript_segments
+from youtube_pipeline.models import Beat, TranscriptSegment
 from youtube_pipeline.render_benchmark import RenderBenchmarkReport
+from youtube_pipeline.time_utils import seconds_to_timestamp
 
 
 def write_config(path: Path) -> None:
@@ -54,6 +57,22 @@ def beat(tmp_path: Path) -> Beat:
         segment_indexes=[1],
         image_path=(tmp_path / "assets" / "images" / "beat_001.png").as_posix(),
     )
+
+
+def segment(index: int, start: float, end: float, text: str) -> TranscriptSegment:
+    return TranscriptSegment(
+        index=index,
+        start=seconds_to_timestamp(start),
+        end=seconds_to_timestamp(end),
+        start_seconds=start,
+        end_seconds=end,
+        duration_seconds=end - start,
+        text=text,
+    )
+
+
+def file_hash(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def test_cli_validate_generated_images_fails_before_images_exist(tmp_path, capsys):
@@ -250,6 +269,113 @@ def test_cli_explicit_modes_are_mutually_exclusive(tmp_path):
         assert exc.code == 2
     else:
         raise AssertionError("Expected argparse to reject mutually exclusive modes")
+
+
+def test_cli_plan_dense_beats_is_mutually_exclusive(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    write_config(config_path)
+
+    try:
+        main(["--config", str(config_path), "--plan-dense-beats", "--generate-prompts"])
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected argparse to reject mutually exclusive dense planning mode")
+
+
+def test_cli_help_shows_dense_planning_as_preview_only(capsys):
+    try:
+        main(["--help"])
+    except SystemExit as exc:
+        assert exc.code == 0
+    else:
+        raise AssertionError("Expected argparse help to exit")
+
+    captured = capsys.readouterr()
+    assert "--plan-dense-beats" in captured.out
+    assert "Preview optional dense beat planning reports" in captured.out
+    assert "overwriting data/beats.json" in captured.out
+
+
+def test_cli_plan_dense_beats_writes_preview_without_overwriting_protected_inputs(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    write_config(config_path)
+    data_dir = tmp_path / "data"
+    beats_path = data_dir / "beats.json"
+    prompts_path = data_dir / "image_prompts.json"
+    transcript_path = data_dir / "transcript_segments.json"
+    write_beats(
+        beats_path,
+        [
+            Beat(
+                beat_number=1,
+                beat_type="normal",
+                start="00:00:00,000",
+                end="00:00:12,000",
+                start_seconds=0.0,
+                end_seconds=12.0,
+                duration_seconds=12.0,
+                text_preview="First complete idea. Second complete idea.",
+                segment_indexes=[1, 2],
+                image_path=(tmp_path / "assets" / "images" / "beat_001.png").as_posix(),
+            )
+        ],
+    )
+    write_transcript_segments(
+        transcript_path,
+        [
+            segment(1, 0, 6, "First complete idea."),
+            segment(2, 6, 12, "Second complete idea."),
+        ],
+    )
+    prompts_path.write_text(json.dumps({"schema_version": 2, "prompts": []}, indent=2), encoding="utf-8")
+    before = {
+        "beats": file_hash(beats_path),
+        "prompts": file_hash(prompts_path),
+        "transcript": file_hash(transcript_path),
+    }
+
+    result = main(["--config", str(config_path), "--plan-dense-beats"])
+
+    after = {
+        "beats": file_hash(beats_path),
+        "prompts": file_hash(prompts_path),
+        "transcript": file_hash(transcript_path),
+    }
+    assert result == 0
+    assert before == after
+    assert (data_dir / "dense_beat_plan.json").exists()
+    assert (data_dir / "dense_beat_plan.md").exists()
+    assert (data_dir / "beats_dense_preview.json").exists()
+    report = json.loads((data_dir / "dense_beat_plan.json").read_text(encoding="utf-8"))
+    markdown = (data_dir / "dense_beat_plan.md").read_text(encoding="utf-8")
+    assert report["planner_strategy"] == "hybrid_dense_rebuild"
+    assert report["applied_splits"] == []
+    assert report["dense_group_records"]
+    assert "`hybrid_dense_rebuild`" in markdown
+
+
+def test_cli_dry_run_does_not_create_dense_preview_artifacts(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    write_config(config_path)
+    input_dir = tmp_path / "input"
+    input_dir.mkdir()
+    (input_dir / "voiceover.mp3").write_bytes(b"placeholder")
+    (input_dir / "transcript.srt").write_text(
+        """
+1
+00:00:00,000 --> 00:00:06,000
+Complete sentence.
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    result = main(["--config", str(config_path), "--dry-run"])
+
+    assert result == 0
+    assert not (tmp_path / "data" / "dense_beat_plan.json").exists()
+    assert not (tmp_path / "data" / "dense_beat_plan.md").exists()
+    assert not (tmp_path / "data" / "beats_dense_preview.json").exists()
 
 
 def test_cli_generated_image_modes_are_mutually_exclusive(tmp_path):
