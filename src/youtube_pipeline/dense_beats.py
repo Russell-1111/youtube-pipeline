@@ -23,6 +23,8 @@ MARKDOWN_REPORT_NAME = "dense_beat_plan.md"
 PREVIEW_BEATS_NAME = "beats_dense_preview.json"
 MAX_REJECTED_EXAMPLES = 20
 DENSE_BOUNDARY_EXTENSION_SECONDS = 1.0
+LOCAL_REBALANCE_MAX_WINDOW = 5
+LOCAL_REBALANCE_MIN_IMPROVEMENT = 10.0
 
 CONTINUATION_WORDS = {
     "and",
@@ -34,6 +36,34 @@ CONTINUATION_WORDS = {
 }
 TERMINAL_PUNCTUATION = {".", "!", "?", '"', "'", ";"}
 WEAK_BOUNDARY_CHARS = {","}
+UNFINISHED_END_WORDS = {
+    "a",
+    "an",
+    "and",
+    "as",
+    "at",
+    "bad",
+    "before",
+    "because",
+    "for",
+    "from",
+    "if",
+    "in",
+    "into",
+    "no",
+    "not",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "through",
+    "to",
+    "too",
+    "while",
+    "with",
+    "without",
+}
 REJECTION_REASON_ORDER = (
     "under_minimum_duration",
     "awkward_continuation_start",
@@ -235,7 +265,14 @@ def _build_dense_pending_beats(
                 beat_config=beat_config,
             )
             if should_flush:
-                normal_end = segment.start_seconds if gap > EPSILON else current[-1].end_seconds
+                normal_start = current_visual_start if current_visual_start is not None else current[0].start_seconds
+                normal_end = _normal_flush_end(
+                    current=current,
+                    next_segment=segment,
+                    visual_start=normal_start,
+                    gap=gap,
+                    beat_config=beat_config,
+                )
                 pending.append(
                     _normal_pending(
                         current,
@@ -287,6 +324,7 @@ def _build_dense_pending_beats(
             )
         )
 
+    pending = _rebalance_fragment_windows(pending, {segment.index: segment for segment in segments}, beat_config)
     _record_short_artifact_candidates(pending, beat_config, rejected)
     return pending, rejected
 
@@ -327,6 +365,12 @@ def _should_flush_dense_group(
         return False
     if proposed_duration > beat_config.dense_hard_max_duration + EPSILON:
         return True
+
+    current_boundary = _boundary_confidence(current[-1].text)
+    next_boundary = _boundary_confidence(next_segment.text)
+    current_promptable = _has_promptable_exit(current[-1].text)
+    if current_promptable and next_boundary != "high":
+        return True
     if proposed_duration <= beat_config.dense_soft_max_duration + EPSILON:
         return False
     boundary_extension_limit = min(
@@ -336,11 +380,288 @@ def _should_flush_dense_group(
     if proposed_duration > boundary_extension_limit + EPSILON:
         return True
 
-    current_boundary = _boundary_confidence(current[-1].text)
-    next_boundary = _boundary_confidence(next_segment.text)
     if current_boundary != "high" and next_boundary == "high":
         return False
     return True
+
+
+def _normal_flush_end(
+    current: list[TranscriptSegment],
+    next_segment: TranscriptSegment,
+    visual_start: float,
+    gap: float,
+    beat_config: BeatConfig,
+) -> float:
+    if gap <= EPSILON:
+        return current[-1].end_seconds
+    gap_extended_end = next_segment.start_seconds
+    if gap_extended_end - visual_start > beat_config.dense_hard_max_duration + EPSILON:
+        return current[-1].end_seconds
+    return gap_extended_end
+
+
+def _has_promptable_exit(text: str) -> bool:
+    return _boundary_confidence(text) == "high" and not _ends_with_unfinished_word(text)
+
+
+def _ends_with_unfinished_word(text: str) -> bool:
+    words = _meaningful_words(text)
+    if not words:
+        return False
+    return words[-1].lower() in UNFINISHED_END_WORDS
+
+
+def _starts_with_continuation_fragment(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return False
+    match = re.search(r"[A-Za-z][A-Za-z']*", stripped)
+    if not match:
+        return False
+    word = match.group(0)
+    lowered = word.lower()
+    return lowered in CONTINUATION_WORDS or word[0].islower()
+
+
+def _rebalance_fragment_windows(
+    pending: list[PendingBeat],
+    segment_lookup: dict[int, TranscriptSegment],
+    beat_config: BeatConfig,
+) -> list[PendingBeat]:
+    items = list(pending)
+    start = 0
+    while start < len(items):
+        replacement = _fragment_window_replacement_at(items, start, segment_lookup, beat_config)
+        if replacement is None:
+            start += 1
+            continue
+        end, optimized = replacement
+        items = items[:start] + optimized + items[end:]
+        start += len(optimized)
+    return items
+
+
+def _fragment_window_replacement_at(
+    pending: list[PendingBeat],
+    start: int,
+    segment_lookup: dict[int, TranscriptSegment],
+    beat_config: BeatConfig,
+) -> tuple[int, list[PendingBeat]] | None:
+    if pending[start].beat_type != "normal":
+        return None
+    max_end = min(len(pending), start + LOCAL_REBALANCE_MAX_WINDOW)
+    best: tuple[float, int, list[PendingBeat]] | None = None
+    for end in range(start + 3, max_end + 1):
+        window = pending[start:end]
+        if any(item.beat_type != "normal" for item in window):
+            break
+        optimized, improvement = _optimize_fragment_window(window, segment_lookup, beat_config)
+        if optimized is None or improvement < LOCAL_REBALANCE_MIN_IMPROVEMENT:
+            continue
+        if best is None or improvement > best[0] + EPSILON:
+            best = (improvement, end, optimized)
+    if best is None:
+        return None
+    _, end, optimized = best
+    return end, optimized
+
+
+def _optimize_fragment_window(
+    window: list[PendingBeat],
+    segment_lookup: dict[int, TranscriptSegment],
+    beat_config: BeatConfig,
+) -> tuple[list[PendingBeat] | None, float]:
+    if not _has_fragment_window_issue(window, segment_lookup):
+        return None, 0.0
+    segment_indexes = [index for item in window for index in item.segment_indexes]
+    if len(segment_indexes) <= len(window):
+        return None, 0.0
+
+    target_count = len(window)
+    current_score = sum(_pending_quality_score(item, segment_lookup, beat_config) for item in window)
+    states: dict[tuple[int, int], tuple[float, list[tuple[int, int]]]] = {(0, 0): (0.0, [])}
+    total_segments = len(segment_indexes)
+    for group_count in range(target_count):
+        next_states: dict[tuple[int, int], tuple[float, list[tuple[int, int]]]] = {}
+        for (position, count), (score, groups) in states.items():
+            if count != group_count:
+                continue
+            remaining_groups = target_count - group_count - 1
+            for end_position in range(position + 1, total_segments - remaining_groups + 1):
+                group = segment_indexes[position:end_position]
+                group_start = _window_group_start(window, segment_indexes, position, segment_lookup)
+                group_end = _window_group_end(window, segment_indexes, end_position, segment_lookup)
+                group_score = _segment_group_quality_score(
+                    group,
+                    group_start,
+                    group_end,
+                    segment_lookup,
+                    beat_config,
+                    allow_continuation_start=position == 0 and _pending_starts_with_continuation(window[0], segment_lookup),
+                )
+                if group_score is None:
+                    continue
+                key = (end_position, group_count + 1)
+                candidate = (score + group_score, groups + [(position, end_position)])
+                if key not in next_states or candidate[0] < next_states[key][0]:
+                    next_states[key] = candidate
+        states.update(next_states)
+
+    best = states.get((total_segments, target_count))
+    if best is None:
+        return None, 0.0
+    best_score, groups = best
+    improvement = current_score - best_score
+    if improvement <= EPSILON:
+        return None, 0.0
+
+    optimized = []
+    for position, end_position in groups:
+        indexes = segment_indexes[position:end_position]
+        optimized.append(
+            _normal_pending_from_indexes(
+                indexes=indexes,
+                start_seconds=_window_group_start(window, segment_indexes, position, segment_lookup),
+                end_seconds=_window_group_end(window, segment_indexes, end_position, segment_lookup),
+                segment_lookup=segment_lookup,
+                beat_config=beat_config,
+                reason="dense_rebuild_local_rebalance",
+            )
+        )
+    return optimized, improvement
+
+
+def _has_fragment_window_issue(window: list[PendingBeat], segment_lookup: dict[int, TranscriptSegment]) -> bool:
+    for left, right in zip(window, window[1:]):
+        if _pending_ends_unfinished(left, segment_lookup) or _pending_starts_with_continuation(right, segment_lookup):
+            return True
+        if _pending_is_garbled_or_thin(left, segment_lookup) or _pending_is_garbled_or_thin(right, segment_lookup):
+            return True
+    return False
+
+
+def _pending_quality_score(
+    item: PendingBeat,
+    segment_lookup: dict[int, TranscriptSegment],
+    beat_config: BeatConfig,
+) -> float:
+    return _segment_group_quality_score(
+        item.segment_indexes,
+        item.start_seconds,
+        item.end_seconds,
+        segment_lookup,
+        beat_config,
+    ) or math.inf
+
+
+def _segment_group_quality_score(
+    indexes: list[int],
+    start_seconds: float,
+    end_seconds: float,
+    segment_lookup: dict[int, TranscriptSegment],
+    beat_config: BeatConfig,
+    allow_continuation_start: bool = True,
+) -> float | None:
+    duration = end_seconds - start_seconds
+    if duration + EPSILON < beat_config.dense_min_duration:
+        return None
+    if duration > beat_config.dense_hard_max_duration + EPSILON:
+        return None
+
+    text = _source_text_for_indexes(indexes, segment_lookup)
+    words = _meaningful_words(text)
+    first_segment = segment_lookup[indexes[0]]
+    last_segment = segment_lookup[indexes[-1]]
+    score = abs(duration - beat_config.dense_preferred_duration)
+    boundary = _boundary_confidence(last_segment.text)
+    if boundary == "medium":
+        score += 10.0
+    elif boundary == "weak":
+        score += 24.0
+    if _ends_with_unfinished_word(last_segment.text):
+        score += 18.0
+    starts_with_continuation = _starts_with_continuation_fragment(first_segment.text)
+    if starts_with_continuation and not allow_continuation_start:
+        return None
+    if starts_with_continuation:
+        score += 24.0
+    if _looks_garbled_or_thin(text):
+        score += 24.0
+    if len(words) < 6:
+        score += 20.0
+    return score
+
+
+def _normal_pending_from_indexes(
+    indexes: list[int],
+    start_seconds: float,
+    end_seconds: float,
+    segment_lookup: dict[int, TranscriptSegment],
+    beat_config: BeatConfig,
+    reason: str,
+) -> PendingBeat:
+    text = _source_text_for_indexes(indexes, segment_lookup)
+    confidence = _boundary_confidence(segment_lookup[indexes[-1]].text)
+    return PendingBeat(
+        beat_type="normal",
+        start_seconds=start_seconds,
+        end_seconds=end_seconds,
+        text_preview=_preview(_clean_preview_text(text), beat_config.max_preview_chars),
+        segment_indexes=list(indexes),
+        reason=reason,
+        boundary_confidence=confidence,
+        score=_group_score(end_seconds - start_seconds, confidence, beat_config),
+    )
+
+
+def _window_group_start(
+    window: list[PendingBeat],
+    segment_indexes: list[int],
+    position: int,
+    segment_lookup: dict[int, TranscriptSegment],
+) -> float:
+    if position == 0:
+        return window[0].start_seconds
+    return segment_lookup[segment_indexes[position]].start_seconds
+
+
+def _window_group_end(
+    window: list[PendingBeat],
+    segment_indexes: list[int],
+    end_position: int,
+    segment_lookup: dict[int, TranscriptSegment],
+) -> float:
+    if end_position == len(segment_indexes):
+        return window[-1].end_seconds
+    return segment_lookup[segment_indexes[end_position]].start_seconds
+
+
+def _source_text_for_indexes(indexes: list[int], segment_lookup: dict[int, TranscriptSegment]) -> str:
+    return " ".join(segment_lookup[index].text for index in indexes if index in segment_lookup)
+
+
+def _pending_ends_unfinished(item: PendingBeat, segment_lookup: dict[int, TranscriptSegment]) -> bool:
+    if not item.segment_indexes:
+        return False
+    segment = segment_lookup[item.segment_indexes[-1]]
+    return _boundary_confidence(segment.text) == "weak" or _ends_with_unfinished_word(segment.text)
+
+
+def _pending_starts_with_continuation(item: PendingBeat, segment_lookup: dict[int, TranscriptSegment]) -> bool:
+    if not item.segment_indexes:
+        return False
+    return _starts_with_continuation_fragment(segment_lookup[item.segment_indexes[0]].text)
+
+
+def _pending_is_garbled_or_thin(item: PendingBeat, segment_lookup: dict[int, TranscriptSegment]) -> bool:
+    return _looks_garbled_or_thin(_source_text_for_indexes(item.segment_indexes, segment_lookup))
+
+
+def _looks_garbled_or_thin(text: str) -> bool:
+    words = _meaningful_words(text)
+    digit_count = sum(character.isdigit() for character in text)
+    alpha_count = sum(character.isalpha() for character in text)
+    return len(words) < 6 or (digit_count >= 6 and digit_count > alpha_count * 0.25)
 
 
 def _flush_reason(current_duration: float, beat_config: BeatConfig) -> str:

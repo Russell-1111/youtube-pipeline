@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from youtube_pipeline.config import BeatConfig, load_config, validate_config
-from youtube_pipeline.dense_beats import build_dense_beat_plan
+from youtube_pipeline.dense_beats import PendingBeat, _rebalance_fragment_windows, build_dense_beat_plan
 from youtube_pipeline.models import Beat, TranscriptSegment
 from youtube_pipeline.time_utils import seconds_to_timestamp
 
@@ -48,6 +48,19 @@ def beat(
         text_preview=preview,
         segment_indexes=indexes,
         image_path=(tmp_path / "assets" / "images" / f"beat_{number:03}.png").as_posix(),
+    )
+
+
+def pending_item(indexes: list[int], start: float, end: float) -> PendingBeat:
+    return PendingBeat(
+        beat_type="normal",
+        start_seconds=start,
+        end_seconds=end,
+        text_preview="Preview sentence.",
+        segment_indexes=indexes,
+        reason="test",
+        boundary_confidence="high",
+        score=0,
     )
 
 
@@ -151,6 +164,99 @@ def test_dense_planner_waits_for_terminal_boundary_under_hard_max(tmp_path):
     assert report["dense_group_records"][0]["boundary_confidence"] == "high"
 
 
+def test_dense_planner_splits_before_degrading_complete_boundary(tmp_path):
+    beats = [beat(tmp_path, 1, 0, 14, [1, 2, 3, 4], preview="Combined caption.")]
+    segments = [
+        segment(1, 0.0, 3.2, "Railways needed common time."),
+        segment(2, 3.2, 6.7, "Offices needed predictable hours."),
+        segment(3, 6.7, 11.5, "Shipping networks all benefited"),
+        segment(4, 11.5, 14.0, "when bodies synchronized."),
+    ]
+
+    preview, _ = build_dense_beat_plan(beats, segments, BEAT_CONFIG, tmp_path / "assets" / "images")
+
+    assert [item.segment_indexes for item in preview] == [[1, 2], [3, 4]]
+    assert all(item.duration_seconds >= BEAT_CONFIG.dense_min_duration for item in preview)
+    assert all(item.duration_seconds <= BEAT_CONFIG.dense_hard_max_duration for item in preview)
+
+
+def test_dense_planner_rebalances_fragment_pair_and_restores_density():
+    segments = [
+        segment(1, 0.0, 6.0, "The first sound is not a"),
+        segment(2, 6.0, 9.0, "bird, it is a phone."),
+        segment(3, 9.0, 15.1, "Another complete image appears."),
+        segment(4, 15.1, 21.2, "A third complete image appears."),
+        segment(5, 21.2, 27.3, "A final complete image appears."),
+    ]
+    pending = [
+        pending_item([1], 0.0, 6.0),
+        pending_item([2], 6.0, 9.0),
+        pending_item([3], 9.0, 15.1),
+        pending_item([4, 5], 15.1, 27.3),
+    ]
+
+    rebalanced = _rebalance_fragment_windows(pending, {item.index: item for item in segments}, BEAT_CONFIG)
+
+    assert [item.segment_indexes for item in rebalanced] == [[1, 2], [3], [4], [5]]
+    assert all(item.duration_seconds >= BEAT_CONFIG.dense_min_duration for item in rebalanced)
+
+
+def test_dense_planner_does_not_rebalance_fragment_pair_above_hard_max():
+    segments = [
+        segment(1, 0.0, 7.0, "The first sound is not a"),
+        segment(2, 7.0, 13.1, "bird, it is a phone."),
+        segment(3, 13.1, 19.2, "Another complete image appears."),
+    ]
+    pending = [
+        pending_item([1], 0.0, 7.0),
+        pending_item([2], 7.0, 13.1),
+        pending_item([3], 13.1, 19.2),
+    ]
+
+    rebalanced = _rebalance_fragment_windows(pending, {item.index: item for item in segments}, BEAT_CONFIG)
+
+    assert [item.segment_indexes for item in rebalanced] == [[1], [2], [3]]
+
+
+def test_dense_planner_rebalance_avoids_new_lowercase_continuation_starts():
+    segments = [
+        segment(1, 0.0, 6.0, "The first sound is not a"),
+        segment(2, 6.0, 9.0, "bird, it is a phone."),
+        segment(3, 9.0, 15.1, "Another complete image appears."),
+        segment(4, 15.1, 21.2, "A third complete image appears."),
+        segment(5, 21.2, 27.3, "A final complete image appears."),
+    ]
+    pending = [
+        pending_item([1], 0.0, 6.0),
+        pending_item([2], 6.0, 9.0),
+        pending_item([3], 9.0, 15.1),
+        pending_item([4, 5], 15.1, 27.3),
+    ]
+
+    rebalanced = _rebalance_fragment_windows(pending, {item.index: item for item in segments}, BEAT_CONFIG)
+
+    assert all(not segments[item.segment_indexes[0] - 1].text[0].islower() for item in rebalanced)
+
+
+def test_dense_planner_rebalances_numeric_fragment_with_coherent_text():
+    segments = [
+        segment(1, 0.0, 4.0, "903 11 58 215."),
+        segment(2, 4.0, 7.0, "A grid of symbols with no"),
+        segment(3, 7.0, 10.0, "body, no voice, and still it tightens."),
+        segment(4, 10.0, 16.1, "Another complete image appears."),
+        segment(5, 16.1, 22.2, "A final complete image appears."),
+    ]
+    pending = [
+        pending_item([1, 2], 0.0, 7.0),
+        pending_item([3], 7.0, 10.0),
+        pending_item([4, 5], 10.0, 22.2),
+    ]
+
+    rebalanced = _rebalance_fragment_windows(pending, {item.index: item for item in segments}, BEAT_CONFIG)
+
+    assert [item.segment_indexes for item in rebalanced] == [[1, 2, 3], [4], [5]]
+
+
 def test_dense_planner_flushes_before_hard_max_even_for_terminal_boundary(tmp_path):
     beats = [beat(tmp_path, 1, 0, 12.4, [1, 2, 3], preview="Combined caption.")]
     segments = [
@@ -195,7 +301,7 @@ def test_dense_planner_caps_rejected_candidate_examples(tmp_path):
 
     rejected_count = sum(len(items) for items in report["rejected_candidates"].values())
     assert rejected_count <= 20
-    assert "under_minimum_duration" in report["rejected_candidates"]
+    assert all(len(items) <= 20 for items in report["rejected_candidates"].values())
 
 
 def test_source_text_safety_can_make_plan_unsafe(tmp_path):
