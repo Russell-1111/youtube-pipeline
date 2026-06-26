@@ -9,6 +9,7 @@ from .config import ensure_output_dirs, load_config, validate_config
 from .contact_sheet import generate_contact_sheet
 from .dense_beats import print_dense_plan_summary, run_dense_beat_plan
 from .dense_beat_review import print_dense_review_summary, run_dense_beat_review
+from .dense_prompts import print_dense_prompt_summary, run_dense_prompt_generation
 from .errors import InputFileError, PipelineError
 from .generated_images import beats_with_generated_image_paths, load_and_validate_generated_images
 from .images import generate_placeholder_images
@@ -68,6 +69,11 @@ def main(argv: list[str] | None = None) -> int:
         "--review-dense-beats",
         action="store_true",
         help="Review dense preview beats without generating prompts or modifying production files.",
+    )
+    mode_group.add_argument(
+        "--generate-dense-prompts",
+        action="store_true",
+        help="Generate preview-only dense image prompt artifacts without modifying production files.",
     )
     mode_group.add_argument(
         "--script-audit",
@@ -161,6 +167,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.review_dense_beats:
             result = run_dense_beat_review(config, base_dir)
             print_dense_review_summary(result, base_dir)
+            return 0
+
+        if args.generate_dense_prompts:
+            result = run_dense_prompt_generation(config, base_dir)
+            print_dense_prompt_summary(result, base_dir)
             return 0
 
         if args.generate_prompts:

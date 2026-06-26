@@ -110,6 +110,10 @@ def _sanitize_source_text(text: str) -> str:
     return " ".join(text.replace(TURBOSCRIBE_WATERMARK, " ").split())
 
 
+def sanitize_prompt_source_text(text: str) -> str:
+    return _sanitize_source_text(text)
+
+
 def _visual_concepts(source_text: str) -> tuple[str, list[str]]:
     strong_concepts, strong_keywords = _matching_concepts(source_text, STRONG_VISUAL_CONCEPTS)
     if strong_concepts:
@@ -120,6 +124,10 @@ def _visual_concepts(source_text: str) -> tuple[str, list[str]]:
         return "; ".join(weak_concepts[:MAX_VISUAL_CONCEPTS]), weak_keywords[:MAX_VISUAL_CONCEPTS]
 
     return DEFAULT_VISUAL_CONCEPT, []
+
+
+def visual_concepts_for_text(source_text: str) -> tuple[str, list[str]]:
+    return _visual_concepts(source_text)
 
 
 def _matching_concepts(
@@ -169,6 +177,10 @@ def _build_prompt(beat: Beat, source_text: str, visual_concept_text: str) -> str
         "Frame: 16:9 YouTube frame, 1920x1080. Not photorealistic. Not a busy multi-panel storyboard. "
         f"Beat type: {beat.beat_type}. Visual metaphor hints: {visual_concept_text}. Narration beat: {source_text}"
     )
+
+
+def build_standard_image_prompt(beat: Beat, source_text: str, visual_concept_text: str) -> str:
+    return _build_prompt(beat, source_text, visual_concept_text)
 
 
 def _display_path(path: Path, base_dir: Path) -> str:

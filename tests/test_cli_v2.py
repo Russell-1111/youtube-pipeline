@@ -295,6 +295,33 @@ def test_cli_review_dense_beats_is_mutually_exclusive(tmp_path):
         raise AssertionError("Expected argparse to reject mutually exclusive dense review mode")
 
 
+def test_cli_generate_dense_prompts_is_mutually_exclusive(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    write_config(config_path)
+
+    try:
+        main(["--config", str(config_path), "--generate-dense-prompts", "--generate-prompts"])
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected argparse to reject mutually exclusive dense prompt mode")
+
+
+def test_cli_generate_prompts_behavior_remains_standard_only(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    write_config(config_path)
+    data_dir = tmp_path / "data"
+    write_beats(data_dir / "beats.json", [beat(tmp_path)])
+    write_transcript_segments(data_dir / "transcript_segments.json", [segment(1, 0, 6, "Standard source text.")])
+
+    result = main(["--config", str(config_path), "--generate-prompts"])
+
+    assert result == 0
+    assert (data_dir / "image_prompts.json").exists()
+    assert not (data_dir / "image_prompts_dense_preview.json").exists()
+    assert not (data_dir / "image_prompts_dense_preview.md").exists()
+
+
 def test_cli_help_shows_dense_planning_as_preview_only(capsys):
     try:
         main(["--help"])
