@@ -109,6 +109,10 @@ def finding_codes(report: dict) -> list[str]:
     return [finding["code"] for finding in report["findings"]]
 
 
+def visual_density_codes(report: dict) -> list[str]:
+    return [finding["code"] for finding in report["sections"]["visual_density"]["findings"]]
+
+
 def test_production_audit_writes_deterministic_json_and_markdown(tmp_path):
     write_beats(tmp_path / "data" / "beats.json", [beat(tmp_path, 1, 0, 6, "Complete sentence.")])
     write_transcript_segments(tmp_path / "data" / "transcript_segments.json", [segment(1, 0, 6, "Complete sentence.")])
@@ -133,6 +137,7 @@ def test_production_audit_writes_deterministic_json_and_markdown(tmp_path):
     ]
     assert set(report["sections"]) == {
         "pacing",
+        "visual_density",
         "generated_images",
         "prompts",
         "metaphors",
@@ -146,6 +151,7 @@ def test_production_audit_writes_deterministic_json_and_markdown(tmp_path):
     assert first.json_path.exists()
     assert first.markdown_path.exists()
     assert "# Production Audit Report" in first.markdown_path.read_text(encoding="utf-8")
+    assert "## Visual Density" in first.markdown_path.read_text(encoding="utf-8")
 
 
 def test_findings_have_required_shape_and_missing_optional_files_warn(tmp_path):
@@ -216,6 +222,102 @@ def test_long_beat_thresholds_and_first_30_seconds_are_bucketed(tmp_path):
     assert "LONG_BEAT_BODY_REVIEW" in codes
     assert "LONG_BEAT_BODY_HIGH_PRIORITY" in codes
     assert "LONG_BEAT_BODY_PACING_RISK" in codes
+
+
+def test_visual_density_sparse_is_advisory_and_backward_compatible(tmp_path):
+    beats = [
+        beat(tmp_path, 1, 0, 10, "Sparse one."),
+        beat(tmp_path, 2, 10, 20, "Sparse two."),
+        beat(tmp_path, 3, 20, 30, "Sparse three."),
+        beat(tmp_path, 4, 30, 40, "Sparse four."),
+        beat(tmp_path, 5, 40, 50, "Sparse five."),
+        beat(tmp_path, 6, 50, 60, "Sparse six."),
+    ]
+    write_beats(tmp_path / "data" / "beats.json", beats)
+
+    result = audit(tmp_path)
+    visual_density = result.report["sections"]["visual_density"]
+    top_level_codes = finding_codes(result.report)
+
+    assert visual_density["beat_count"] == 6
+    assert visual_density["total_duration_seconds"] == 60
+    assert visual_density["average_beat_seconds"] == 10
+    assert visual_density["median_beat_seconds"] == 10
+    assert visual_density["p90_beat_seconds"] == 10
+    assert visual_density["estimated_dense_target_count"] == 8
+    assert visual_density["estimated_preferred_beat_seconds"] == 7.5
+    assert visual_density["target_range_min"] == 70
+    assert visual_density["target_range_max"] == 90
+    assert visual_density["density_label"] == "usable_sparse"
+    assert "VISUAL_DENSITY_USABLE_SPARSE" in visual_density_codes(result.report)
+    assert "DENSE_TARGET_ESTIMATE" in visual_density_codes(result.report)
+    assert "VISUAL_DENSITY_USABLE_SPARSE" not in top_level_codes
+    assert not result.has_core_errors
+
+
+def test_visual_density_accepts_dense_average_without_sparse_warning(tmp_path):
+    dense_beats = [
+        beat(tmp_path, number, (number - 1) * 7.5, number * 7.5, f"Dense {number}.")
+        for number in range(1, 9)
+    ]
+    write_beats(tmp_path / "data" / "beats.json", dense_beats)
+
+    result = audit(tmp_path)
+    visual_density = result.report["sections"]["visual_density"]
+
+    assert visual_density["beat_count"] == 8
+    assert visual_density["average_beat_seconds"] == 7.5
+    assert visual_density["density_label"] == "dense_target_ready"
+    assert "VISUAL_DENSITY_USABLE_SPARSE" not in visual_density_codes(result.report)
+    assert visual_density["beats_over_8s"] == 0
+    assert visual_density["review_priority_beats"] == []
+
+
+def test_visual_density_reports_beats_over_config_max_as_nested_diagnostic(tmp_path):
+    write_beats(
+        tmp_path / "data" / "beats.json",
+        [
+            beat(tmp_path, 1, 0, 13, "Longer than configured max."),
+            beat(tmp_path, 2, 13, 20, "Normal dense follow up."),
+        ],
+    )
+
+    result = audit(tmp_path)
+    visual_density = result.report["sections"]["visual_density"]
+
+    assert visual_density["beats_over_12s"] == 1
+    assert "BEATS_OVER_CONFIG_MAX_DURATION" in visual_density_codes(result.report)
+    assert "BEATS_OVER_CONFIG_MAX_DURATION" not in finding_codes(result.report)
+    assert visual_density["review_priority_beats"][0]["beat_number"] == 1
+    assert "exceeds_config_max_duration" in visual_density["review_priority_beats"][0]["reason"]
+
+
+def test_visual_density_caps_review_priority_and_example_lists(tmp_path):
+    long_beats = []
+    start = 0.0
+    for number in range(1, 13):
+        end = start + 10 + number / 10
+        long_beats.append(beat(tmp_path, number, start, end, f"Long beat {number} with enough source detail."))
+        start = end
+    write_beats(tmp_path / "data" / "beats.json", long_beats)
+
+    result = audit(tmp_path)
+    visual_density = result.report["sections"]["visual_density"]
+
+    assert visual_density["beats_over_8s"] == 12
+    assert visual_density["beats_over_10s"] == 12
+    assert len(visual_density["longest_beats"]) == 8
+    assert len(visual_density["shortest_beats"]) == 8
+    assert len(visual_density["review_priority_beats"]) == 8
+    assert "LONG_STATIC_STRETCH_REVIEW" in visual_density_codes(result.report)
+    assert set(visual_density["review_priority_beats"][0]) == {
+        "beat_number",
+        "start_seconds",
+        "end_seconds",
+        "duration_seconds",
+        "reason",
+        "source_preview",
+    }
 
 
 def test_brightness_warnings_use_synthetic_images(tmp_path):

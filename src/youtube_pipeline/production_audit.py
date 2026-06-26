@@ -49,6 +49,11 @@ CONTINUATION_WORDS = {
     "yet",
 }
 PUNCTUATION_ENDINGS = {".", "!", "?", '"', "'"}
+VISUAL_DENSITY_TARGET_RANGE_MIN = 70
+VISUAL_DENSITY_TARGET_RANGE_MAX = 90
+VISUAL_DENSITY_PREFERRED_BEAT_SECONDS = 7.5
+VISUAL_DENSITY_MIN_REVIEW_SECONDS = 8.0
+VISUAL_DENSITY_REVIEW_LIMIT = 8
 
 
 @dataclass(frozen=True)
@@ -89,6 +94,7 @@ def run_production_audit(config: PipelineConfig, base_dir: Path) -> AuditResult:
         )
         return _write_reports(report, config.outputs.data_dir, base_dir)
 
+    sections["visual_density"] = _audit_visual_density(beats, config.beats.max_duration)
     sections["pacing"] = _audit_pacing(beats, prompt_lookup, findings)
     sections["generated_images"] = _audit_generated_images(beats, generated_image_dir, findings)
     sections["prompts"] = _audit_prompts(prompt_payload, prompt_records, generated_image_dir, findings)
@@ -137,6 +143,7 @@ def print_audit_summary(result: AuditResult, base_dir: Path) -> None:
 
 def _empty_sections() -> dict[str, dict[str, Any]]:
     return {
+        "visual_density": {},
         "pacing": {},
         "generated_images": {},
         "prompts": {},
@@ -145,6 +152,161 @@ def _empty_sections() -> dict[str, dict[str, Any]]:
         "render_risk": {},
         "outputs": {},
         "artifact_safety": {},
+    }
+
+
+def _audit_visual_density(beats: list[Beat], config_max_duration: float) -> dict[str, Any]:
+    durations = [beat.duration_seconds for beat in beats]
+    total_duration = round(sum(durations), 3)
+    beat_count = len(beats)
+    average = round(total_duration / beat_count, 3) if beat_count else 0.0
+    median = round(_median(durations), 3) if durations else 0.0
+    p90 = round(_percentile(durations, 90), 3) if durations else 0.0
+    estimated_target = int(round(total_duration / VISUAL_DENSITY_PREFERRED_BEAT_SECONDS)) if total_duration else 0
+
+    beats_over_8 = [beat for beat in beats if beat.duration_seconds > 8.0]
+    beats_over_10 = [beat for beat in beats if beat.duration_seconds > 10.0]
+    beats_over_12 = [beat for beat in beats if beat.duration_seconds > 12.0]
+    beats_over_config_max = [beat for beat in beats if beat.duration_seconds > config_max_duration]
+
+    findings = []
+    if estimated_target and beat_count < max(1, int(math.floor(estimated_target * 0.9))):
+        findings.append(
+            _visual_density_finding(
+                "VISUAL_DENSITY_USABLE_SPARSE",
+                "Current visual pacing is usable but sparse relative to the future 70-90 image target.",
+                "Advisory only: keep this workflow usable while adding optional dense-mode planning later.",
+            )
+        )
+    if beats_over_config_max:
+        findings.append(
+            _visual_density_finding(
+                "BEATS_OVER_CONFIG_MAX_DURATION",
+                f"{len(beats_over_config_max)} beats exceed configured beats.max_duration of {config_max_duration:.1f}s.",
+                "Diagnostic only: investigate why existing beat records exceed config before changing generation behavior.",
+            )
+        )
+    if beats_over_10:
+        findings.append(
+            _visual_density_finding(
+                "LONG_STATIC_STRETCH_REVIEW",
+                f"{len(beats_over_10)} beats are over 10 seconds and may be worth review for future dense visual pacing.",
+                "Review top examples before deciding where optional dense splitting should happen.",
+            )
+        )
+    if estimated_target:
+        findings.append(
+            _visual_density_finding(
+                "DENSE_TARGET_ESTIMATE",
+                f"At {VISUAL_DENSITY_PREFERRED_BEAT_SECONDS:.1f}s per image, this runtime estimates about {estimated_target} visual beats.",
+                "Use as a planning estimate, not a hard image-count requirement.",
+            )
+        )
+
+    return {
+        "beat_count": beat_count,
+        "total_duration_seconds": total_duration,
+        "average_beat_seconds": average,
+        "median_beat_seconds": median,
+        "p90_beat_seconds": p90,
+        "longest_beats": _beat_examples(
+            sorted(beats, key=lambda beat: (-beat.duration_seconds, beat.beat_number))[:VISUAL_DENSITY_REVIEW_LIMIT],
+            "longest_beats",
+        ),
+        "shortest_beats": _beat_examples(
+            sorted(beats, key=lambda beat: (beat.duration_seconds, beat.beat_number))[:VISUAL_DENSITY_REVIEW_LIMIT],
+            "shortest_beats",
+        ),
+        "beats_over_8s": len(beats_over_8),
+        "beats_over_10s": len(beats_over_10),
+        "beats_over_12s": len(beats_over_12),
+        "estimated_dense_target_count": estimated_target,
+        "estimated_preferred_beat_seconds": VISUAL_DENSITY_PREFERRED_BEAT_SECONDS,
+        "target_range_min": VISUAL_DENSITY_TARGET_RANGE_MIN,
+        "target_range_max": VISUAL_DENSITY_TARGET_RANGE_MAX,
+        "density_label": _visual_density_label(beat_count, estimated_target, average),
+        "findings": findings,
+        "review_priority_beats": _review_priority_beats(beats, config_max_duration),
+    }
+
+
+def _median(values: list[float]) -> float:
+    ordered = sorted(values)
+    count = len(ordered)
+    midpoint = count // 2
+    if count % 2:
+        return ordered[midpoint]
+    return (ordered[midpoint - 1] + ordered[midpoint]) / 2
+
+
+def _percentile(values: list[float], percentile: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    rank = (len(ordered) - 1) * percentile / 100
+    lower = int(math.floor(rank))
+    upper = int(math.ceil(rank))
+    if lower == upper:
+        return ordered[lower]
+    weight = rank - lower
+    return ordered[lower] * (1 - weight) + ordered[upper] * weight
+
+
+def _visual_density_label(beat_count: int, estimated_target: int, average_beat_seconds: float) -> str:
+    if beat_count == 0:
+        return "no_beats"
+    lower_bound = max(1, int(math.floor(estimated_target * 0.9))) if estimated_target else 0
+    upper_bound = int(math.ceil(estimated_target * 1.15)) if estimated_target else 0
+    if estimated_target and beat_count < lower_bound:
+        return "usable_sparse"
+    if estimated_target and beat_count > upper_bound and average_beat_seconds < 6.5:
+        return "over_dense_review"
+    if 6.5 <= average_beat_seconds <= 9.0:
+        return "dense_target_ready"
+    return "usable_standard"
+
+
+def _visual_density_finding(code: str, message: str, recommendation: str) -> dict[str, Any]:
+    return {
+        "severity": "info",
+        "code": code,
+        "message": message,
+        "recommendation": recommendation,
+    }
+
+
+def _review_priority_beats(beats: list[Beat], config_max_duration: float) -> list[dict[str, Any]]:
+    candidates = []
+    for beat in beats:
+        reasons = []
+        if beat.duration_seconds > config_max_duration:
+            reasons.append("exceeds_config_max_duration")
+        if beat.duration_seconds > 10.0:
+            reasons.append("long_static_stretch_review")
+        elif beat.duration_seconds > VISUAL_DENSITY_MIN_REVIEW_SECONDS:
+            reasons.append("future_dense_mode_candidate")
+        if not reasons:
+            continue
+        candidates.append((beat.duration_seconds, beat.beat_number, beat, ", ".join(reasons)))
+
+    selected = sorted(candidates, key=lambda item: (-item[0], item[1]))[:VISUAL_DENSITY_REVIEW_LIMIT]
+    return [_beat_example(beat, reason) for _, _, beat, reason in selected]
+
+
+def _beat_examples(beats: list[Beat], reason: str) -> list[dict[str, Any]]:
+    return [_beat_example(beat, reason) for beat in beats]
+
+
+def _beat_example(beat: Beat, reason: str) -> dict[str, Any]:
+    return {
+        "beat_number": beat.beat_number,
+        "start_seconds": round(beat.start_seconds, 3),
+        "end_seconds": round(beat.end_seconds, 3),
+        "duration_seconds": round(beat.duration_seconds, 3),
+        "reason": reason,
+        "source_preview": _preview(beat.text_preview, 100),
     }
 
 
@@ -852,6 +1014,13 @@ def _markdown_report(report: dict[str, Any]) -> str:
             f"- Transcript segments: {summary['transcript_segment_count']}",
             f"- Generated images: {summary['generated_image_count_found']} found / {summary['generated_image_count_expected']} expected",
             "",
+            "## Visual Density",
+            "",
+        ]
+    )
+    lines.extend(_visual_density_markdown(report["sections"].get("visual_density", {})))
+    lines.extend(
+        [
             "## Top Warnings",
             "",
         ]
@@ -900,6 +1069,50 @@ def _markdown_report(report: dict[str, Any]) -> str:
         lines.append("- No priority recommendations")
     lines.append("")
     return "\n".join(lines)
+
+
+def _visual_density_markdown(visual_density: dict[str, Any]) -> list[str]:
+    if not visual_density:
+        return ["- No visual-density diagnostics available", ""]
+
+    lines = [
+        f"- Density label: `{visual_density.get('density_label')}`",
+        f"- Beats: {visual_density.get('beat_count', 0)}",
+        f"- Average beat: {visual_density.get('average_beat_seconds', 0):.3f}s",
+        f"- Median beat: {visual_density.get('median_beat_seconds', 0):.3f}s",
+        f"- P90 beat: {visual_density.get('p90_beat_seconds', 0):.3f}s",
+        f"- Long beats: {visual_density.get('beats_over_8s', 0)} over 8s, "
+        f"{visual_density.get('beats_over_10s', 0)} over 10s, "
+        f"{visual_density.get('beats_over_12s', 0)} over 12s",
+        f"- Dense target estimate: {visual_density.get('estimated_dense_target_count', 0)} beats at "
+        f"{visual_density.get('estimated_preferred_beat_seconds', 0):.1f}s preferred average "
+        f"(future target range {visual_density.get('target_range_min', 0)}-{visual_density.get('target_range_max', 0)})",
+    ]
+    findings = visual_density.get("findings", [])
+    if findings:
+        lines.append("- Diagnostic notes:")
+        lines.extend(f"  - `{finding['code']}`: {finding['message']}" for finding in findings[:VISUAL_DENSITY_REVIEW_LIMIT])
+    else:
+        lines.append("- Diagnostic notes: none")
+
+    priority = visual_density.get("review_priority_beats", [])
+    lines.extend(["", "### Review Priority Beats", ""])
+    if not priority:
+        lines.append("- None")
+    else:
+        lines.append("| Beat | Start | End | Duration | Reason | Source Preview |")
+        lines.append("| --- | ---: | ---: | ---: | --- | --- |")
+        for item in priority[:VISUAL_DENSITY_REVIEW_LIMIT]:
+            lines.append(
+                f"| {item['beat_number']} | {item['start_seconds']:.3f} | {item['end_seconds']:.3f} | "
+                f"{item['duration_seconds']:.3f}s | {item['reason']} | {_escape_markdown_table_text(item['source_preview'])} |"
+            )
+    lines.append("")
+    return lines
+
+
+def _escape_markdown_table_text(value: str) -> str:
+    return value.replace("|", "\\|").replace("\n", " ")
 
 
 def _long_beat_markdown(pacing: dict[str, Any]) -> list[str]:
