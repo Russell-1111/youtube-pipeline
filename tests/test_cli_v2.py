@@ -5,6 +5,7 @@ from PIL import Image
 from youtube_pipeline.__main__ import main
 from youtube_pipeline.manifest import write_beats
 from youtube_pipeline.models import Beat
+from youtube_pipeline.render_benchmark import RenderBenchmarkReport
 
 
 def write_config(path: Path) -> None:
@@ -144,6 +145,101 @@ def test_cli_use_generated_images_kinetic_fails_validation_before_render(tmp_pat
     assert "Missing generated image for beat 001" in captured.err
 
 
+def test_cli_use_generated_images_kinetic_ffmpeg_selects_generated_paths_and_output(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    write_config(config_path)
+    write_beats(tmp_path / "data" / "beats.json", [beat(tmp_path)])
+    voiceover = tmp_path / "input" / "voiceover.mp3"
+    voiceover.parent.mkdir(parents=True)
+    voiceover.write_bytes(b"placeholder")
+    image_path = tmp_path / "assets" / "generated_images" / "beat_001.png"
+    image_path.parent.mkdir(parents=True)
+    Image.new("RGB", (1920, 1080), "white").save(image_path)
+
+    calls = []
+
+    def fake_render_video_kinetic_ffmpeg(beats, audio_path, output_path, fps, width, height, **kwargs):
+        calls.append((beats, audio_path, output_path, fps, width, height, kwargs))
+
+        class Result:
+            motion_equivalence_note = "experimental"
+
+        return Result()
+
+    monkeypatch.setattr("youtube_pipeline.__main__.get_audio_duration", lambda audio_path: 6.0)
+    monkeypatch.setattr("youtube_pipeline.__main__.render_video_kinetic_ffmpeg", fake_render_video_kinetic_ffmpeg)
+
+    result = main(["--config", str(config_path), "--use-generated-images-kinetic-ffmpeg"])
+
+    assert result == 0
+    assert len(calls) == 1
+    beats, audio_path, output_path, fps, width, height, kwargs = calls[0]
+    assert beats[0].image_path == image_path.as_posix()
+    assert audio_path == voiceover
+    assert output_path == tmp_path / "output" / "final_video_generated_kinetic_ffmpeg.mp4"
+    assert fps == 30
+    assert width == 1920
+    assert height == 1080
+    assert kwargs["audio_duration_seconds"] == 6.0
+    assert kwargs["work_dir"] == tmp_path / "output" / "benchmarks" / "final_video_generated_kinetic_ffmpeg_segments"
+
+
+def test_cli_benchmark_kinetic_render_writes_under_benchmarks(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    write_config(config_path)
+    write_beats(tmp_path / "data" / "beats.json", [beat(tmp_path)])
+    voiceover = tmp_path / "input" / "voiceover.mp3"
+    voiceover.parent.mkdir(parents=True)
+    voiceover.write_bytes(b"placeholder")
+    image_path = tmp_path / "assets" / "generated_images" / "beat_001.png"
+    image_path.parent.mkdir(parents=True)
+    Image.new("RGB", (1920, 1080), "white").save(image_path)
+
+    calls = []
+
+    def fake_run_kinetic_benchmark(**kwargs):
+        calls.append(kwargs)
+        return RenderBenchmarkReport(
+            renderer_name=kwargs["renderer_name"],
+            elapsed_seconds=1.2,
+            beat_count=1,
+            video_duration_seconds=6.0,
+            audio_duration_seconds=6.0,
+            output_path=(kwargs["output_dir"] / "ffmpeg_sample_1beats.mp4").as_posix(),
+            output_size_bytes=123,
+            width=1920,
+            height=1080,
+            fps=30.0,
+            audio_present=True,
+            duration_delta_seconds=0.0,
+            success=True,
+            warnings=[],
+            errors=[],
+        )
+
+    monkeypatch.setattr("youtube_pipeline.__main__.run_kinetic_benchmark", fake_run_kinetic_benchmark)
+
+    result = main(
+        [
+            "--config",
+            str(config_path),
+            "--benchmark-kinetic-render",
+            "--benchmark-renderer",
+            "ffmpeg",
+            "--sample-beats",
+            "1",
+        ]
+    )
+
+    assert result == 0
+    assert len(calls) == 1
+    call = calls[0]
+    assert call["renderer_name"] == "ffmpeg"
+    assert call["output_dir"] == tmp_path / "output" / "benchmarks"
+    assert call["sample_beats"] == 1
+    assert call["full"] is False
+
+
 def test_cli_explicit_modes_are_mutually_exclusive(tmp_path):
     config_path = tmp_path / "config.yaml"
     write_config(config_path)
@@ -166,3 +262,22 @@ def test_cli_generated_image_modes_are_mutually_exclusive(tmp_path):
         assert exc.code == 2
     else:
         raise AssertionError("Expected argparse to reject mutually exclusive generated image modes")
+
+
+def test_cli_ffmpeg_generated_image_mode_is_mutually_exclusive(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    write_config(config_path)
+
+    try:
+        main(
+            [
+                "--config",
+                str(config_path),
+                "--use-generated-images-kinetic",
+                "--use-generated-images-kinetic-ffmpeg",
+            ]
+        )
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected argparse to reject mutually exclusive kinetic modes")

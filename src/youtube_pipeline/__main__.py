@@ -14,6 +14,8 @@ from .manifest import write_beats, write_manifest, write_transcript_segments
 from .production_audit import print_audit_summary, run_production_audit
 from .prompts import write_image_prompts
 from .render import get_audio_duration, render_video, render_video_kinetic
+from .render_benchmark import run_kinetic_benchmark
+from .render_ffmpeg import render_video_kinetic_ffmpeg
 from .script_audit import print_script_audit_summary, run_script_audit
 from .script_quality import print_script_quality_summary, run_script_quality_audit
 from .srt_parser import parse_srt_file
@@ -41,6 +43,16 @@ def main(argv: list[str] | None = None) -> int:
         help="Render video using validated generated images with subtle deterministic motion.",
     )
     mode_group.add_argument(
+        "--use-generated-images-kinetic-ffmpeg",
+        action="store_true",
+        help="Experimentally render validated generated images with FFmpeg kinetic motion.",
+    )
+    mode_group.add_argument(
+        "--benchmark-kinetic-render",
+        action="store_true",
+        help="Render a sample kinetic benchmark under output/benchmarks/.",
+    )
+    mode_group.add_argument(
         "--production-audit",
         action="store_true",
         help="Write advisory production-readiness JSON and Markdown reports without rendering.",
@@ -58,6 +70,35 @@ def main(argv: list[str] | None = None) -> int:
         const="input/script.md",
         default=None,
         help="Write pre-voiceover script quality heuristic JSON and Markdown reports without rendering.",
+    )
+    parser.add_argument(
+        "--benchmark-renderer",
+        choices=("ffmpeg", "moviepy"),
+        default="ffmpeg",
+        help="Renderer to use with --benchmark-kinetic-render.",
+    )
+    parser.add_argument(
+        "--sample-beats",
+        type=int,
+        default=5,
+        help="Number of beats to render for --benchmark-kinetic-render when --full is not set.",
+    )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="Render all beats for --benchmark-kinetic-render.",
+    )
+    parser.add_argument(
+        "--stress-beats",
+        type=int,
+        default=None,
+        help="Synthetic beat count for --benchmark-kinetic-render stress tests.",
+    )
+    parser.add_argument(
+        "--stress-duration",
+        type=float,
+        default=None,
+        help="Synthetic duration in seconds for --benchmark-kinetic-render stress tests.",
     )
     args = parser.parse_args(argv)
 
@@ -153,6 +194,63 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Generated image validation passed: {len(beats)} images")
             print(f"Final video: {output_path}")
             return 0
+
+        if args.use_generated_images_kinetic_ffmpeg:
+            beats, report = load_and_validate_generated_images(beats_path, generated_image_dir)
+            _print_validation_report(report)
+            if not report.ok:
+                return 1
+            _validate_voiceover(config.inputs.voiceover)
+            generated_beats = beats_with_generated_image_paths(beats, generated_image_dir)
+            output_path = config.outputs.final_video.parent / "final_video_generated_kinetic_ffmpeg.mp4"
+            benchmark_dir = config.outputs.final_video.parent / "benchmarks"
+            result = render_video_kinetic_ffmpeg(
+                generated_beats,
+                config.inputs.voiceover,
+                output_path,
+                config.video.fps,
+                config.video.width,
+                config.video.height,
+                work_dir=benchmark_dir / "final_video_generated_kinetic_ffmpeg_segments",
+                audio_duration_seconds=get_audio_duration(config.inputs.voiceover),
+            )
+            print(f"Generated image validation passed: {len(beats)} images")
+            print(f"Final video: {output_path}")
+            print(f"Renderer: experimental ffmpeg")
+            print(f"Motion note: {result.motion_equivalence_note}")
+            return 0
+
+        if args.benchmark_kinetic_render:
+            beats, report = load_and_validate_generated_images(beats_path, generated_image_dir)
+            _print_validation_report(report)
+            if not report.ok:
+                return 1
+            _validate_voiceover(config.inputs.voiceover)
+            generated_beats = beats_with_generated_image_paths(beats, generated_image_dir)
+            benchmark_report = run_kinetic_benchmark(
+                renderer_name=args.benchmark_renderer,
+                beats=generated_beats,
+                audio_path=config.inputs.voiceover,
+                output_dir=config.outputs.final_video.parent / "benchmarks",
+                fps=config.video.fps,
+                width=config.video.width,
+                height=config.video.height,
+                sample_beats=args.sample_beats,
+                full=args.full,
+                stress_beats=args.stress_beats,
+                stress_duration=args.stress_duration,
+            )
+            print(f"Benchmark renderer: {benchmark_report.renderer_name}")
+            print(f"Benchmark success: {benchmark_report.success}")
+            print(f"Benchmark output: {benchmark_report.output_path}")
+            print(f"Benchmark elapsed seconds: {benchmark_report.elapsed_seconds}")
+            print(f"Benchmark report: {config.outputs.final_video.parent / 'benchmarks' / 'render_benchmark_report.json'}")
+            if benchmark_report.warnings:
+                print(f"Benchmark warnings: {len(benchmark_report.warnings)}")
+            if benchmark_report.errors:
+                for error in benchmark_report.errors:
+                    print(f"Benchmark error: {error}", file=sys.stderr)
+            return 0 if benchmark_report.success else 1
 
         return _run_v1_pipeline(config, dry_run=args.dry_run)
     except PipelineError as exc:

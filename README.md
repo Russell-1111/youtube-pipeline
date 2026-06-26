@@ -39,6 +39,8 @@ python -m youtube_pipeline --generate-prompts
 python -m youtube_pipeline --validate-generated-images
 python -m youtube_pipeline --use-generated-images
 python -m youtube_pipeline --use-generated-images-kinetic
+python -m youtube_pipeline --use-generated-images-kinetic-ffmpeg
+python -m youtube_pipeline --benchmark-kinetic-render --benchmark-renderer ffmpeg --sample-beats 5
 python -m youtube_pipeline --production-audit
 python -m pytest
 ```
@@ -53,7 +55,31 @@ python -m pytest
 
 `--use-generated-images-kinetic` validates first, then renders `output/final_video_generated_kinetic.mp4` with subtle deterministic MoviePy motion.
 
+`--use-generated-images-kinetic-ffmpeg` validates first, then renders `output/final_video_generated_kinetic_ffmpeg.mp4` with an experimental FFmpeg renderer. This is not the default renderer. Keep using the MoviePy kinetic command as the trusted fallback until FFmpeg speed, metadata, audio sync, image ordering, frame review, and full manual review pass.
+
+`--benchmark-kinetic-render` renders sample or stress-test kinetic outputs under `output/benchmarks/` and writes `output/benchmarks/render_benchmark_report.json`. It defaults to a 5-beat FFmpeg sample. Use `--benchmark-renderer moviepy` only for small samples unless a full MoviePy render has been explicitly approved.
+
 `--production-audit` writes local advisory production-readiness reports under `data/` without rendering or calling remote services.
+
+## FFmpeg Review Commands
+
+After an FFmpeg render, extract matched frames for manual visual review:
+
+```powershell
+New-Item -ItemType Directory -Force output\benchmarks\frame_compare | Out-Null
+$ffmpeg = python -c "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())"
+
+& $ffmpeg -y -ss 00:00:05 -i output\final_video_generated_kinetic.mp4 -frames:v 1 output\benchmarks\frame_compare\moviepy_000005.png
+& $ffmpeg -y -ss 00:00:05 -i output\final_video_generated_kinetic_ffmpeg.mp4 -frames:v 1 output\benchmarks\frame_compare\ffmpeg_000005.png
+
+& $ffmpeg -y -ss 00:02:00 -i output\final_video_generated_kinetic.mp4 -frames:v 1 output\benchmarks\frame_compare\moviepy_000200.png
+& $ffmpeg -y -ss 00:02:00 -i output\final_video_generated_kinetic_ffmpeg.mp4 -frames:v 1 output\benchmarks\frame_compare\ffmpeg_000200.png
+
+& $ffmpeg -y -ss 00:05:00 -i output\final_video_generated_kinetic.mp4 -frames:v 1 output\benchmarks\frame_compare\moviepy_000500.png
+& $ffmpeg -y -ss 00:05:00 -i output\final_video_generated_kinetic_ffmpeg.mp4 -frames:v 1 output\benchmarks\frame_compare\ffmpeg_000500.png
+```
+
+The FFmpeg renderer is still experimental until speed, metadata, audio sync, image ordering, sample-frame review, and full manual review pass.
 
 ## Folder Structure
 
@@ -84,12 +110,12 @@ The ignored local folders are required for production runs but are not part of t
 
 ## Optimization Targets
 
-- Reduce the number of visual beats without reducing retention.
-- Generate fewer but stronger prompts.
+- Support higher generated-image density, around 70-90 high-quality images for future 9-11 minute videos, without reducing visual quality.
+- Generate stronger, more varied prompts.
 - Improve the prompt batching workflow.
-- Optimize MoviePy render performance.
-- Explore FFmpeg-based kinetic rendering alternatives.
-- Cache static image transformations.
+- Keep the MoviePy kinetic renderer as the trusted fallback while testing separate FFmpeg rendering.
+- Benchmark FFmpeg sample, full, and 70-90 image stress renders before promoting any renderer.
+- Preserve a future path to beat-level render caching.
 - Reduce unnecessary per-frame computation.
 - Improve the script brief and quality gate using competitor-style references.
 - Improve title, thumbnail, description, captions, and launch packaging workflow.
