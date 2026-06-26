@@ -19,13 +19,14 @@ python -m pip install -e .[test]
 5. Create the transcript or SRT externally.
 6. Place the voiceover and transcript locally under `input/`.
 7. Run a dry run to produce metadata, beats, placeholder images, and contact sheets.
-8. Generate image prompts from the visual beats.
-9. Generate images externally from the prompt records.
-10. Validate generated images against the beat manifest.
-11. Render the final generated-image video.
-12. Render the final kinetic generated-image video.
-13. Optionally do a manual CapCut audio polish pass.
-14. Prepare the YouTube launch package manually.
+8. Optionally plan and review dense preview beats before any dense prompt workflow.
+9. Generate image prompts from the visual beats.
+10. Generate images externally from the prompt records.
+11. Validate generated images against the beat manifest.
+12. Render the final generated-image video.
+13. Render the final kinetic generated-image video.
+14. Optionally do a manual CapCut audio polish pass.
+15. Prepare the YouTube launch package manually.
 
 The script audits are local heuristic gates. They help catch runtime, structure, and retention-risk issues before voiceover generation, but they are not guarantees of audience performance.
 
@@ -36,6 +37,7 @@ python -m youtube_pipeline --dry-run
 python -m youtube_pipeline --script-audit input/script.md
 python -m youtube_pipeline --script-quality-audit input/script.md
 python -m youtube_pipeline --plan-dense-beats
+python -m youtube_pipeline --review-dense-beats
 python -m youtube_pipeline --generate-prompts
 python -m youtube_pipeline --validate-generated-images
 python -m youtube_pipeline --use-generated-images
@@ -49,6 +51,8 @@ python -m pytest
 `--dry-run` reads the local voiceover and transcript, builds transcript segments, visual beats, a manifest, placeholder beat images, and a contact sheet, but skips MP4 rendering.
 
 `--plan-dense-beats` reads existing `data/beats.json` and `data/transcript_segments.json`, then writes preview-only dense beat planning artifacts to `data/dense_beat_plan.json`, `data/dense_beat_plan.md`, and `data/beats_dense_preview.json`. It does not overwrite production beats, generate prompts, generate images, build contact sheets, or render video.
+
+`--review-dense-beats` reads `data/beats_dense_preview.json`, `data/dense_beat_plan.json`, and `data/transcript_segments.json`, then writes `data/dense_beat_review.json` and `data/dense_beat_review.md`. It is review-only: readiness values such as `ready_with_review` or `not_ready` are report results, not CLI failures. Future dense prompt generation should not proceed with blocked beats, and risky beats should be manually reviewed first.
 
 `--generate-prompts` reads `data/beats.json` and writes structured prompt records to `data/image_prompts.json`. The pipeline does not call an image-generation API.
 

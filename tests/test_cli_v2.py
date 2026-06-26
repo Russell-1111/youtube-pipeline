@@ -283,6 +283,18 @@ def test_cli_plan_dense_beats_is_mutually_exclusive(tmp_path):
         raise AssertionError("Expected argparse to reject mutually exclusive dense planning mode")
 
 
+def test_cli_review_dense_beats_is_mutually_exclusive(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    write_config(config_path)
+
+    try:
+        main(["--config", str(config_path), "--review-dense-beats", "--generate-prompts"])
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected argparse to reject mutually exclusive dense review mode")
+
+
 def test_cli_help_shows_dense_planning_as_preview_only(capsys):
     try:
         main(["--help"])
@@ -295,6 +307,20 @@ def test_cli_help_shows_dense_planning_as_preview_only(capsys):
     assert "--plan-dense-beats" in captured.out
     assert "Preview optional dense beat planning reports" in captured.out
     assert "overwriting data/beats.json" in captured.out
+
+
+def test_cli_help_shows_dense_review_as_review_only(capsys):
+    try:
+        main(["--help"])
+    except SystemExit as exc:
+        assert exc.code == 0
+    else:
+        raise AssertionError("Expected argparse help to exit")
+
+    captured = capsys.readouterr()
+    assert "--review-dense-beats" in captured.out
+    assert "Review dense preview beats" in captured.out
+    assert "production files" in captured.out
 
 
 def test_cli_plan_dense_beats_writes_preview_without_overwriting_protected_inputs(tmp_path):
@@ -353,6 +379,99 @@ def test_cli_plan_dense_beats_writes_preview_without_overwriting_protected_input
     assert report["applied_splits"] == []
     assert report["dense_group_records"]
     assert "`hybrid_dense_rebuild`" in markdown
+
+
+def test_cli_review_dense_beats_writes_report_without_overwriting_protected_inputs(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    write_config(config_path)
+    data_dir = tmp_path / "data"
+    beats_path = data_dir / "beats.json"
+    prompts_path = data_dir / "image_prompts.json"
+    transcript_path = data_dir / "transcript_segments.json"
+    preview_path = data_dir / "beats_dense_preview.json"
+    dense_plan_path = data_dir / "dense_beat_plan.json"
+    source_beat = beat(tmp_path)
+    write_beats(beats_path, [source_beat])
+    write_beats(preview_path, [source_beat])
+    write_transcript_segments(transcript_path, [segment(1, 0, 6, "123 456")])
+    prompts_path.write_text(json.dumps({"schema_version": 2, "prompts": []}, indent=2), encoding="utf-8")
+    dense_plan_path.write_text(
+        json.dumps(
+            {
+                "planner_version": 1,
+                "planner_strategy": "hybrid_dense_rebuild",
+                "warnings": [],
+                "dense_group_records": [
+                    {
+                        "dense_beat_number": 1,
+                        "beat_type": "normal",
+                        "source_standard_beat_number": 1,
+                        "start_seconds": 0.0,
+                        "end_seconds": 6.0,
+                        "duration_seconds": 6.0,
+                        "segment_indexes": [1],
+                        "grouping_score": 0.0,
+                        "boundary_confidence": "high",
+                        "reason": "dense_rebuild_preferred_boundary",
+                    }
+                ],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    before = {
+        "beats": file_hash(beats_path),
+        "prompts": file_hash(prompts_path),
+        "transcript": file_hash(transcript_path),
+    }
+
+    result = main(["--config", str(config_path), "--review-dense-beats"])
+
+    after = {
+        "beats": file_hash(beats_path),
+        "prompts": file_hash(prompts_path),
+        "transcript": file_hash(transcript_path),
+    }
+    assert result == 0
+    assert before == after
+    assert (data_dir / "dense_beat_review.json").exists()
+    assert (data_dir / "dense_beat_review.md").exists()
+    report = json.loads((data_dir / "dense_beat_review.json").read_text(encoding="utf-8"))
+    markdown = (data_dir / "dense_beat_review.md").read_text(encoding="utf-8")
+    assert report["readiness"] == "not_ready"
+    assert report["recommendation_counts"]["blocked"] == 1
+    assert "Dense Beat Review" in markdown
+    assert "NO_MEANINGFUL_SOURCE_TEXT" in markdown
+
+
+def test_cli_review_dense_beats_missing_preview_fails_without_writing_report(tmp_path, capsys):
+    config_path = tmp_path / "config.yaml"
+    write_config(config_path)
+
+    result = main(["--config", str(config_path), "--review-dense-beats"])
+
+    captured = capsys.readouterr()
+    assert result == 1
+    assert "Missing beats file" in captured.err
+    assert not (tmp_path / "data" / "dense_beat_review.json").exists()
+    assert not (tmp_path / "data" / "dense_beat_review.md").exists()
+
+
+def test_cli_review_dense_beats_malformed_preview_fails_without_writing_report(tmp_path, capsys):
+    config_path = tmp_path / "config.yaml"
+    write_config(config_path)
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "beats_dense_preview.json").write_text("{not valid json", encoding="utf-8")
+
+    result = main(["--config", str(config_path), "--review-dense-beats"])
+
+    captured = capsys.readouterr()
+    assert result == 1
+    assert "Invalid beats JSON" in captured.err
+    assert not (data_dir / "dense_beat_review.json").exists()
+    assert not (data_dir / "dense_beat_review.md").exists()
 
 
 def test_cli_dry_run_does_not_create_dense_preview_artifacts(tmp_path):
