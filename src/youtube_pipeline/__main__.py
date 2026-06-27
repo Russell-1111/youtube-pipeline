@@ -11,6 +11,7 @@ from .dense_beats import print_dense_plan_summary, run_dense_beat_plan
 from .dense_beat_review import print_dense_review_summary, run_dense_beat_review
 from .dense_images import print_dense_image_summary, run_dense_image_preparation
 from .dense_prompts import print_dense_prompt_summary, run_dense_prompt_generation
+from .dense_render import print_dense_render_summary, run_dense_preview_render
 from .errors import InputFileError, PipelineError
 from .generated_images import beats_with_generated_image_paths, load_and_validate_generated_images
 from .images import generate_placeholder_images
@@ -80,6 +81,11 @@ def main(argv: list[str] | None = None) -> int:
         "--prepare-dense-images",
         action="store_true",
         help="Prepare dense preview image slots and validation reports without generating images.",
+    )
+    mode_group.add_argument(
+        "--render-dense-preview",
+        action="store_true",
+        help="Safely render preview-only dense video to output/final_dense_preview.mp4.",
     )
     mode_group.add_argument(
         "--script-audit",
@@ -183,6 +189,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.prepare_dense_images:
             result = run_dense_image_preparation(config, base_dir)
             print_dense_image_summary(result, base_dir)
+            return 0
+
+        if args.render_dense_preview:
+            result = run_dense_preview_render(config, base_dir)
+            print_dense_render_summary(result, base_dir)
             return 0
 
         if args.generate_prompts:
