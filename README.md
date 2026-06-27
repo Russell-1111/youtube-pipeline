@@ -39,6 +39,7 @@ python -m youtube_pipeline --script-quality-audit input/script.md
 python -m youtube_pipeline --plan-dense-beats
 python -m youtube_pipeline --review-dense-beats
 python -m youtube_pipeline --generate-dense-prompts
+python -m youtube_pipeline --prepare-dense-images
 python -m youtube_pipeline --generate-prompts
 python -m youtube_pipeline --validate-generated-images
 python -m youtube_pipeline --use-generated-images
@@ -55,7 +56,9 @@ python -m pytest
 
 `--review-dense-beats` reads `data/beats_dense_preview.json`, `data/dense_beat_plan.json`, and `data/transcript_segments.json`, then writes `data/dense_beat_review.json` and `data/dense_beat_review.md`. It is review-only: readiness values such as `ready_with_review` or `not_ready` are report results, not CLI failures. Future dense prompt generation should not proceed with blocked beats, and risky beats should be manually reviewed first.
 
-`--generate-dense-prompts` reads `data/beats_dense_preview.json`, `data/dense_beat_review.json`, `data/dense_beat_plan.json`, and `data/transcript_segments.json`, then writes preview-only prompt artifacts to `data/image_prompts_dense_preview.json` and `data/image_prompts_dense_preview.md`. It exits non-zero before writing if the dense review is `not_ready`, if any risky or blocked beats exist, or if the dense beat/review rows do not match. It does not overwrite `data/image_prompts.json`, `data/beats.json`, or `data/transcript_segments.json`.
+`--generate-dense-prompts` reads `data/beats_dense_preview.json`, `data/dense_beat_review.json`, `data/dense_beat_plan.json`, and `data/transcript_segments.json`, then writes preview-only prompt artifacts to `data/image_prompts_dense_preview.json` and `data/image_prompts_dense_preview.md`. Dense prompts include deterministic composition family, camera, scene-anchor, and main-object variation to reduce repeated visual motifs. It exits non-zero before writing if the dense review is `not_ready`, if any risky or blocked beats exist, or if the dense beat/review rows do not match. It does not overwrite `data/image_prompts.json`, `data/beats.json`, or `data/transcript_segments.json`.
+
+`--prepare-dense-images` reads dense preview prompt, beat, and review artifacts, creates `assets/generated_images_dense_preview/`, and writes `data/dense_image_generation_report.json` plus `data/dense_image_generation_report.md`. It uses deterministic expected filenames such as `dense_beat_001.png`, validates any supplied PNGs, reports missing images without failing, and does not call image-generation APIs, render media, build contact sheets, apply dense beats, or write standard production paths.
 
 `--generate-prompts` reads `data/beats.json` and writes structured prompt records to `data/image_prompts.json`. The pipeline does not call an image-generation API.
 
@@ -101,6 +104,7 @@ The FFmpeg renderer is still experimental until speed, metadata, audio sync, ima
 - `output/` - local private render output folder. Ignored by Git.
 - `assets/images/` - local placeholder beat images. Ignored by Git.
 - `assets/generated_images/` - local externally generated image files. Ignored by Git.
+- `assets/generated_images_dense_preview/` - local externally generated dense preview image files. Ignored by Git.
 - `assets/generated_images_backups/` - local generated-image backups. Ignored by Git.
 - `assets/contact_sheets/` - local contact sheet outputs. Ignored by Git.
 - `data/` - local generated metadata, beat records, prompt records, manifests, and audit reports. Ignored by Git.

@@ -1,3 +1,4 @@
+from collections import Counter
 import hashlib
 import json
 from pathlib import Path
@@ -214,6 +215,36 @@ def test_review_beats_receive_previous_and_next_context_while_approve_beats_do_n
     assert "Do not depict a different beat" in review["final_image_prompt"]
 
 
+def test_review_beat_visual_concept_uses_target_text_not_neighboring_context(tmp_path):
+    beats = [
+        beat(1, "A phone alarm and factory bell fill the previous beat."),
+        beat(2, "because the center fragment needs help"),
+        beat(3, "A calendar grid and digital screen fill the next beat."),
+    ]
+    payload = build_dense_prompt_payload(
+        preview_beats=beats,
+        review=dense_review(["approve", "review", "approve"]),
+        dense_plan=dense_plan(3),
+        segments=[
+            segment(1, "A phone alarm and factory bell fill the previous beat."),
+            segment(2, "because the center fragment needs help"),
+            segment(3, "A calendar grid and digital screen fill the next beat."),
+        ],
+        base_dir=tmp_path,
+    )
+
+    review = payload["prompts"][1]
+    assert review["context_used"] is True
+    assert review["previous_context_text"] == "A phone alarm and factory bell fill the previous beat."
+    assert review["next_context_text"] == "A calendar grid and digital screen fill the next beat."
+    assert review["visual_concept_keywords"] == []
+    assert "phone" not in review["visual_concept_text"]
+    assert "factory" not in review["visual_concept_text"]
+    assert "calendar" not in review["visual_concept_text"]
+    assert "screen" not in review["visual_concept_text"]
+    assert "Do not depict a different beat" in review["final_image_prompt"]
+
+
 def test_first_beat_review_context_handles_missing_previous_context(tmp_path):
     payload = build_dense_prompt_payload(
         preview_beats=[beat(1, "because the first fragment opens"), beat(2, "Next complete sentence.")],
@@ -228,6 +259,122 @@ def test_first_beat_review_context_handles_missing_previous_context(tmp_path):
     assert row["previous_context_text"] is None
     assert row["next_context_text"] == "Next complete sentence."
     assert "Previous beat context: None available." in row["final_image_prompt"]
+
+
+def test_dense_visual_concepts_reduce_repeated_generic_phrases_and_vary_by_content(tmp_path):
+    texts = [
+        "The body wakes tired, breath shallow, sleep still heavy in the chest.",
+        "A phone alarm beside the bed screams before thought can form.",
+        "Railways, offices, schools, and factories synchronize bodies from a distance.",
+        "The calendar turns tasks and deadlines into a maze of measurable failure.",
+        "A narrow apartment room holds breakfast, a window, and the fear of lateness.",
+        "Fire, animals, seasons, rain, harvest, and sunlight once shaped work.",
+        "A screen lights with notifications, symbols, and unanswered messages.",
+        "Time becomes debt, threat, guilt, and pressure inside attention.",
+    ]
+    payload = build_dense_prompt_payload(
+        preview_beats=[beat(index, text) for index, text in enumerate(texts, start=1)],
+        review=dense_review(["approve"] * len(texts), readiness="ready"),
+        dense_plan=dense_plan(len(texts)),
+        segments=[segment(index, text) for index, text in enumerate(texts, start=1)],
+        base_dir=tmp_path,
+    )
+
+    concepts = [row["visual_concept_text"] for row in payload["prompts"]]
+    families = [row["composition_family"] for row in payload["prompts"]]
+    cameras = [row["camera_shot"] for row in payload["prompts"]]
+    all_keywords = {keyword for row in payload["prompts"] for keyword in row["visual_concept_keywords"]}
+    assert "quiet symbolic scene drawn from the emotional tone of the narration" not in concepts
+    assert "vast shadowed space shaped by time, with a small human figure and subtle clocklike geometry" not in concepts
+    assert len(set(concepts)) >= 7
+    assert len(set(families)) >= 6
+    assert len(set(cameras)) >= 5
+    assert max(Counter(concepts).values()) <= 2
+    assert "body" in all_keywords
+    assert "phone" in all_keywords
+    assert "railways" in all_keywords
+    assert "calendar" in all_keywords
+    assert {"apartment", "room", "window", "breakfast"} & all_keywords
+    assert {"fire", "animals", "seasons", "rain", "harvest", "sunlight"} & all_keywords
+    assert "screen" in all_keywords
+    assert "time" in all_keywords
+
+
+def test_dense_prompts_include_concrete_composition_camera_and_anchor_metadata(tmp_path):
+    payload = build_dense_prompt_payload(
+        preview_beats=[
+            beat(1, "A screen lights the face before any thought arrives."),
+            beat(2, "The factory bell pulls bodies toward the shift."),
+            beat(3, "Rain, sunlight, and a field shaped the older day."),
+        ],
+        review=dense_review(["approve", "approve", "approve"], readiness="ready"),
+        dense_plan=dense_plan(3),
+        segments=[
+            segment(1, "A screen lights the face before any thought arrives."),
+            segment(2, "The factory bell pulls bodies toward the shift."),
+            segment(3, "Rain, sunlight, and a field shaped the older day."),
+        ],
+        base_dir=tmp_path,
+    )
+
+    for row in payload["prompts"]:
+        assert row["composition_family"]
+        assert row["camera_shot"]
+        assert row["scene_anchor"]
+        assert row["main_object"]
+        assert f"Create one {row['composition_family']} image" in row["final_image_prompt"]
+        assert f"Camera and framing: {row['camera_shot']}" in row["final_image_prompt"]
+        assert f"Concrete scene anchor: {row['scene_anchor']}" in row["final_image_prompt"]
+        assert "Avoid generic symbolic rooms" in row["final_image_prompt"]
+        assert "fake UI" in row["final_image_prompt"]
+
+
+def test_adjacent_dense_prompt_families_and_objects_are_not_overly_repetitive(tmp_path):
+    texts = [
+        "Time becomes guilt and pressure before the day begins.",
+        "Time becomes debt and threat inside attention.",
+        "The clock can divide the day but not attention.",
+        "Time was never truly running out.",
+        "The value of the day is not defined by time.",
+    ]
+    payload = build_dense_prompt_payload(
+        preview_beats=[beat(index, text) for index, text in enumerate(texts, start=1)],
+        review=dense_review(["approve"] * len(texts), readiness="ready"),
+        dense_plan=dense_plan(len(texts)),
+        segments=[segment(index, text) for index, text in enumerate(texts, start=1)],
+        base_dir=tmp_path,
+    )
+
+    families = [row["composition_family"] for row in payload["prompts"]]
+    objects = [row["main_object"] for row in payload["prompts"]]
+    assert all(families[index] != families[index - 1] for index in range(1, len(families)))
+    assert all(objects[index] != objects[index - 1] for index in range(1, len(objects)))
+
+
+def test_dense_prompt_banned_generic_motifs_are_limited_without_direct_need(tmp_path):
+    texts = [
+        "The body feels guilt and pressure before work begins.",
+        "Attention narrows under invisible expectations.",
+        "Coordination does not have to become worship.",
+        "Life moves slowly and quietly in cycles.",
+    ]
+    payload = build_dense_prompt_payload(
+        preview_beats=[beat(index, text) for index, text in enumerate(texts, start=1)],
+        review=dense_review(["approve"] * len(texts), readiness="ready"),
+        dense_plan=dense_plan(len(texts)),
+        segments=[segment(index, text) for index, text in enumerate(texts, start=1)],
+        base_dir=tmp_path,
+    )
+
+    main_objects = [row["main_object"].lower() for row in payload["prompts"]]
+    assert not any("clock" in value for value in main_objects)
+    assert not any("phone" in value for value in main_objects)
+    assert not any("bed" in value for value in main_objects)
+    assert not any("calendar" in value for value in main_objects)
+    assert not any("grid" in value for value in main_objects)
+    prompt_text = " ".join(row["final_image_prompt"].lower() for row in payload["prompts"])
+    assert "icon-like people" in prompt_text
+    assert "schematic institution layouts" in prompt_text
 
 
 def test_json_output_has_required_top_level_and_prompt_row_fields(tmp_path):
@@ -267,6 +414,10 @@ def test_json_output_has_required_top_level_and_prompt_row_fields(tmp_path):
         "context_used",
         "visual_concept_text",
         "visual_concept_keywords",
+        "composition_family",
+        "camera_shot",
+        "scene_anchor",
+        "main_object",
         "final_image_prompt",
         "style_constraints",
         "prompt_risk_notes",

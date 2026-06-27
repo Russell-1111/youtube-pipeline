@@ -307,6 +307,18 @@ def test_cli_generate_dense_prompts_is_mutually_exclusive(tmp_path):
         raise AssertionError("Expected argparse to reject mutually exclusive dense prompt mode")
 
 
+def test_cli_prepare_dense_images_is_mutually_exclusive(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    write_config(config_path)
+
+    try:
+        main(["--config", str(config_path), "--prepare-dense-images", "--generate-prompts"])
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected argparse to reject mutually exclusive dense image preparation mode")
+
+
 def test_cli_generate_prompts_behavior_remains_standard_only(tmp_path):
     config_path = tmp_path / "config.yaml"
     write_config(config_path)
