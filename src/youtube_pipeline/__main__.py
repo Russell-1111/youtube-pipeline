@@ -9,6 +9,7 @@ from .config import ensure_output_dirs, load_config, validate_config
 from .contact_sheet import generate_contact_sheet
 from .dense_beats import print_dense_plan_summary, run_dense_beat_plan
 from .dense_beat_review import print_dense_review_summary, run_dense_beat_review
+from .dense_handoff import print_dense_handoff_summary, run_dense_handoff_preparation
 from .dense_images import print_dense_image_summary, run_dense_image_preparation
 from .dense_prompts import print_dense_prompt_summary, run_dense_prompt_generation
 from .dense_render import print_dense_render_summary, run_dense_preview_render
@@ -86,6 +87,11 @@ def main(argv: list[str] | None = None) -> int:
         "--render-dense-preview",
         action="store_true",
         help="Safely render preview-only dense video to output/final_dense_preview.mp4.",
+    )
+    mode_group.add_argument(
+        "--prepare-dense-handoff",
+        action="store_true",
+        help="Dry-run dense production handoff validation reports without copying or overwriting production files.",
     )
     mode_group.add_argument(
         "--script-audit",
@@ -195,6 +201,11 @@ def main(argv: list[str] | None = None) -> int:
             result = run_dense_preview_render(config, base_dir)
             print_dense_render_summary(result, base_dir)
             return 0
+
+        if args.prepare_dense_handoff:
+            result = run_dense_handoff_preparation(config, base_dir)
+            print_dense_handoff_summary(result, base_dir)
+            return 0 if result.ready else 1
 
         if args.generate_prompts:
             payload = write_image_prompts(
