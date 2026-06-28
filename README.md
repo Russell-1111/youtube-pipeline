@@ -40,6 +40,8 @@ python -m youtube_pipeline --plan-dense-beats
 python -m youtube_pipeline --review-dense-beats
 python -m youtube_pipeline --generate-dense-prompts
 python -m youtube_pipeline --prepare-dense-images
+python -m youtube_pipeline --prepare-dense-handoff
+python -m youtube_pipeline --apply-dense-handoff --dry-run
 python -m youtube_pipeline --generate-prompts
 python -m youtube_pipeline --validate-generated-images
 python -m youtube_pipeline --use-generated-images
@@ -59,6 +61,10 @@ python -m pytest
 `--generate-dense-prompts` reads `data/beats_dense_preview.json`, `data/dense_beat_review.json`, `data/dense_beat_plan.json`, and `data/transcript_segments.json`, then writes preview-only prompt artifacts to `data/image_prompts_dense_preview.json` and `data/image_prompts_dense_preview.md`. Dense prompts include deterministic composition family, camera, scene-anchor, and main-object variation to reduce repeated visual motifs. It exits non-zero before writing if the dense review is `not_ready`, if any risky or blocked beats exist, or if the dense beat/review rows do not match. It does not overwrite `data/image_prompts.json`, `data/beats.json`, or `data/transcript_segments.json`.
 
 `--prepare-dense-images` reads dense preview prompt, beat, and review artifacts, creates `assets/generated_images_dense_preview/`, and writes `data/dense_image_generation_report.json` plus `data/dense_image_generation_report.md`. It uses deterministic expected filenames such as `dense_beat_001.png`, validates any supplied PNGs, reports missing images without failing, and does not call image-generation APIs, render media, build contact sheets, apply dense beats, or write standard production paths.
+
+`--prepare-dense-handoff` validates the dense preview handoff gates and writes `data/dense_handoff_report.json` plus `data/dense_handoff_report.md`. It is a dry-run handoff report and does not copy dense preview files into production paths.
+
+`--apply-dense-handoff --dry-run` validates the same dense handoff gates and writes `data/dense_apply_report.json` plus `data/dense_apply_report.md` with the exact copy plan. It does not modify production files. The future real overwrite command is `--apply-dense-handoff --confirm-production-overwrite`; it requires a clean git status, a ready dense handoff recommendation, 70 dense beats, 70 prompts, 70 dense images, no QA failures, `output/final_dense_preview.mp4`, and creates backups under `backups/dense_apply_<timestamp>/` before copying. Running `--apply-dense-handoff` without either flag refuses by default.
 
 `--generate-prompts` reads `data/beats.json` and writes structured prompt records to `data/image_prompts.json`. The pipeline does not call an image-generation API.
 

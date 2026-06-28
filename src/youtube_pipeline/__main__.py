@@ -9,6 +9,7 @@ from .config import ensure_output_dirs, load_config, validate_config
 from .contact_sheet import generate_contact_sheet
 from .dense_beats import print_dense_plan_summary, run_dense_beat_plan
 from .dense_beat_review import print_dense_review_summary, run_dense_beat_review
+from .dense_apply import print_dense_apply_summary, run_dense_apply
 from .dense_handoff import print_dense_handoff_summary, run_dense_handoff_preparation
 from .dense_images import print_dense_image_summary, run_dense_image_preparation
 from .dense_prompts import print_dense_prompt_summary, run_dense_prompt_generation
@@ -30,8 +31,13 @@ from .srt_parser import parse_srt_file
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the local YouTube video production pipeline.")
     parser.add_argument("--config", default="config.yaml", help="Path to config.yaml.")
+    parser.add_argument("--dry-run", action="store_true", help="Run a safe dry-run mode.")
+    parser.add_argument(
+        "--confirm-production-overwrite",
+        action="store_true",
+        help="Allow --apply-dense-handoff to overwrite production dense handoff targets after all gates pass.",
+    )
     mode_group = parser.add_mutually_exclusive_group()
-    mode_group.add_argument("--dry-run", action="store_true", help="Generate metadata/images/contact sheet but skip MP4 rendering.")
     mode_group.add_argument("--generate-prompts", action="store_true", help="Generate image prompt records from data/beats.json.")
     mode_group.add_argument(
         "--validate-generated-images",
@@ -94,6 +100,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Dry-run dense production handoff validation reports without copying or overwriting production files.",
     )
     mode_group.add_argument(
+        "--apply-dense-handoff",
+        action="store_true",
+        help="Explicitly dry-run or apply dense handoff to production files.",
+    )
+    mode_group.add_argument(
         "--script-audit",
         nargs="?",
         const="input/script.md",
@@ -137,6 +148,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Synthetic duration in seconds for --benchmark-kinetic-render stress tests.",
     )
     args = parser.parse_args(argv)
+    _validate_cli_flag_combinations(parser, args)
 
     try:
         config_path = Path(args.config)
@@ -206,6 +218,16 @@ def main(argv: list[str] | None = None) -> int:
             result = run_dense_handoff_preparation(config, base_dir)
             print_dense_handoff_summary(result, base_dir)
             return 0 if result.ready else 1
+
+        if args.apply_dense_handoff:
+            result = run_dense_apply(
+                config,
+                base_dir,
+                dry_run=args.dry_run,
+                confirm_production_overwrite=args.confirm_production_overwrite,
+            )
+            print_dense_apply_summary(result, base_dir)
+            return 0 if result.ok else 1
 
         if args.generate_prompts:
             payload = write_image_prompts(
@@ -322,6 +344,34 @@ def main(argv: list[str] | None = None) -> int:
     except PipelineError as exc:
         print(f"Pipeline error: {exc}", file=sys.stderr)
         return 1
+
+
+def _validate_cli_flag_combinations(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    explicit_modes = [
+        "generate_prompts",
+        "validate_generated_images",
+        "use_generated_images",
+        "use_generated_images_kinetic",
+        "use_generated_images_kinetic_ffmpeg",
+        "benchmark_kinetic_render",
+        "production_audit",
+        "plan_dense_beats",
+        "review_dense_beats",
+        "generate_dense_prompts",
+        "prepare_dense_images",
+        "render_dense_preview",
+        "prepare_dense_handoff",
+        "apply_dense_handoff",
+        "script_audit",
+        "script_quality_audit",
+    ]
+    selected_modes = [name for name in explicit_modes if getattr(args, name) not in (False, None)]
+    if args.dry_run and selected_modes and selected_modes != ["apply_dense_handoff"]:
+        parser.error("--dry-run can only be combined with --apply-dense-handoff, or used by itself for the standard pipeline dry run.")
+    if args.confirm_production_overwrite and not args.apply_dense_handoff:
+        parser.error("--confirm-production-overwrite requires --apply-dense-handoff.")
+    if args.apply_dense_handoff and args.dry_run and args.confirm_production_overwrite:
+        parser.error("--apply-dense-handoff accepts either --dry-run or --confirm-production-overwrite, not both.")
 
 
 def _run_v1_pipeline(config, dry_run: bool) -> int:
